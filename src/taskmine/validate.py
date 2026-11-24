@@ -295,5 +295,5 @@ def validate_all(cfg: Config, drafts: list[Path], ex, jobs: int, base_runs: int,
             results.append(r)
             (summary_dir / f"{r['id']}.json").write_text(json.dumps(r, indent=1, sort_keys=True) + "\n")
             log(f"{r['verdict']:9} {r['id']} {r.get('reason', '')} f2p={len(r.get('fail_to_pass', []))} "
-                f"p2p={len(r.get('pass_to_pass', []))} [{len(results)}/{len(drafts)}]")
+                f"p2p={len(r.get('pass_to_pass', []))} [{len(results)}/{len(drafts)}]", flush=True)
     return results

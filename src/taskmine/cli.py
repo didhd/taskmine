@@ -21,7 +21,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
 from taskmine import config as config_mod
@@ -85,35 +85,40 @@ def cmd_meta(a) -> int:
     return 0
 
 
+def _build_one(job: tuple[str, str, str, dict]) -> tuple[str, tuple[str, str] | None]:
+    """One draft, in its own process: snapshot building is CPU-bound Python (tar, regex)."""
+    recipe, repo_path, out, cand_json = job
+    cfg = config_mod.load(recipe)
+    c = Candidate.from_json(cand_json)
+    mp = Path(out) / "meta" / f"{c.id}.json"
+    meta = json.loads(mp.read_text()) if mp.exists() else {}
+    try:
+        emit.build_draft(Repo(repo_path), cfg, c, meta, Path(out) / "drafts")
+        return c.id, None
+    except emit.DraftError as e:
+        return c.id, (e.code, e.detail)
+    except Exception as e:  # one broken candidate must not stop the others
+        return c.id, ("taskmine-error", repr(e)[:500])
+
+
 def cmd_build(a) -> int:
-    cfg = config_mod.load(a.recipe)
+    config_mod.load(a.recipe)
     out = Path(a.out)
-    repo = Repo(a.repo)
     cands = _select(_cands(out), a.ids)
-    drafts_dir = out / "drafts"
-    drafts_dir.mkdir(exist_ok=True)
-
-    def one(c: Candidate):
-        mp = out / "meta" / f"{c.id}.json"
-        meta = json.loads(mp.read_text()) if mp.exists() else {}
-        try:
-            emit.build_draft(repo, cfg, c, meta, drafts_dir)
-            return c.id, None
-        except emit.DraftError as e:
-            return c.id, (e.code, e.detail)
-
+    (out / "drafts").mkdir(exist_ok=True)
+    jobs = [(a.recipe, a.repo, str(out), c.to_json()) for c in cands]
     refused = []
-    with ThreadPoolExecutor(max_workers=a.jobs) as pool:
-        for i, (cid, err) in enumerate(pool.map(one, cands), 1):
+    with ProcessPoolExecutor(max_workers=a.jobs) as pool:
+        for i, (cid, err) in enumerate(pool.map(_build_one, jobs), 1):
             if err:
                 refused.append({"id": cid, "code": err[0], "detail": err[1]})
-                print(f"refused  {cid}: {err[0]}: {err[1][:120]}")
+                print(f"refused  {cid}: {err[0]}: {err[1][:120]}", flush=True)
             elif i % 25 == 0:
-                print(f"built {i}/{len(cands)}")
+                print(f"built {i}/{len(cands)}", flush=True)
     with open(out / "build-refusals.jsonl", "a" if a.ids else "w") as f:
         for r in refused:
             f.write(json.dumps(r) + "\n")
-    print(f"{len(cands) - len(refused)} drafts in {drafts_dir}, {len(refused)} refused")
+    print(f"{len(cands) - len(refused)} drafts in {out / 'drafts'}, {len(refused)} refused")
     return 0
 
 
