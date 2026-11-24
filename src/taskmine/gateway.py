@@ -121,8 +121,30 @@ def start(root: Path, listen: str, advertise: str, port: int, region: str, endpo
         cfg.write_text(litellm_config(codex_models, region, endpoint, key))
         cfg.chmod(0o600)
         lport = port + 1
-        proc = subprocess.Popen([sys.executable, "-m", "litellm", "--config", str(cfg), "--host", listen,
-                                 "--port", str(lport)], stdout=open(root / "litellm.log", "w"), stderr=subprocess.STDOUT)
+        import shutil
+        import time
+        from pathlib import Path as _P
+
+        exe = _P(sys.executable).with_name("litellm")
+        exe = str(exe) if exe.exists() else shutil.which("litellm")
+        if not exe:
+            raise SystemExit("gateway: the codex endpoint needs LiteLLM: pip install 'litellm[proxy]'")
+        proc = subprocess.Popen([exe, "--config", str(cfg), "--host", listen, "--port", str(lport)],
+                                stdout=open(root / "litellm.log", "w"), stderr=subprocess.STDOUT)
+        # Ready means it answers its liveness route; a crash is reported with its log, never ignored.
+        for _ in range(180):
+            if proc.poll() is not None:
+                raise SystemExit("gateway: LiteLLM exited:\n" + (root / "litellm.log").read_text()[-1500:])
+            try:
+                c = http.client.HTTPConnection("127.0.0.1", lport, timeout=2)
+                c.request("GET", "/health/liveliness")
+                if c.getresponse().status == 200:
+                    break
+            except OSError:
+                pass
+            time.sleep(0.5)
+        else:
+            raise SystemExit("gateway: LiteLLM did not become ready in 90 s")
         info.update(openai_url=f"http://{advertise}:{lport}/v1", openai_key=key)
     lines = ["[gateway]"] + [f"{k} = {json.dumps(v)}" for k, v in info.items()]
     (root / "gateway.toml").write_text("\n".join(lines) + "\n")

@@ -11,7 +11,7 @@ this repository (it contains the monorepo's source); only aggregate numbers are 
   `foxl/tests` (`tsx --test`, 76), `packages/code` (`node --test`, 9).
 - **Harbor 0.27.0** over all 173: the `oracle` agent scored 1.0 on 173 of 173 trials and the `nop`
   agent 0.0 on 173 of 173, with 0 exceptions.
-- **Harbor 0.22.0** (the version eval-harvester pins) over 12 of them: `oracle` 12 of 12 at 1.0,
+- **Harbor 0.22.0** (an older release) over 12 of them: `oracle` 12 of 12 at 1.0,
   `nop` 12 of 12 at 0.0.
 - **`taskmine check`**: 173 of 173 pass, on the box and again on the copy moved to the workstation.
 - **Reproducibility**: the box built every draft from a filtered, shallow transfer clone. Ten tasks
