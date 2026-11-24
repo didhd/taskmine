@@ -186,8 +186,15 @@ def finalize(cfg: Config, draft: Path, validation: dict, tasks_root: Path) -> di
 
     gold_patch = (draft / "solution" / "gold.patch").read_bytes()
     code_lines = contract.added_lines(gold_patch, skip_paths=cfg.docs.match)
-    allowed = con.new_names + con.new_modules + con.exact_text + leak.stated_paths(cand.run_files, prof.workdir)
     notes = []
+    # Exact text that IS a line of the gold code comes from a test that greps the source; the text
+    # probe has already taken those tests out of the required set, so the line is not needed and
+    # stating it would hand over the solution.
+    code_text = leak.code_text_items(con.exact_text, code_lines)
+    if code_text:
+        con.exact_text = [s for s in con.exact_text if s not in set(code_text)]
+        notes.append(f"exact text left out because it is a line of the gold code: {len(code_text)}")
+    allowed = con.new_names + con.new_modules + con.exact_text + leak.stated_paths(cand.run_files, prof.workdir)
     issue = _issue_for(cfg, meta)
     text, sources = instruction.render(
         repo_name=cfg.repo_name, title=title, issue=issue, issue_limit=cfg.issue_max_chars,

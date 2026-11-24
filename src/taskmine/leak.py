@@ -38,6 +38,13 @@ def stated_paths(run_files: list[str], workdir: str) -> list[str]:
     return out
 
 
+def code_text_items(items: list[str], gold_code_lines: list[str]) -> list[str]:
+    """Contract strings that contain a whole gold code line the LINE rule would report."""
+    lines = [_norm(g) for g in gold_code_lines if not _COMMENT.match(g)]
+    lines = [g for g in lines if len(g.replace(" ", "")) >= MIN_LINE]
+    return [s for s in items if any(g in _norm(s) for g in lines)]
+
+
 def find(text: str, gold_code_lines: list[str], allowed: list[str]) -> list[str]:
     """Comment-only gold lines are skipped: a comment that repeats a test's name implements nothing."""
     gold_code_lines = [line for line in gold_code_lines if not _COMMENT.match(line)]
