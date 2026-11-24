@@ -63,7 +63,7 @@ def cmd_scan(a) -> int:
     for k, v in sorted(by_prof.items(), key=lambda x: -x[1]):
         print(f"  candidate  {v:5}  profile {k}")
     for k, v in sorted(counts.items(), key=lambda x: -x[1]):
-        print(f"  left out   {v:5}  {k}: {REFUSALS[k]}")
+        print(f"  left out   {v:5}  {k}" + ("" if a.brief else f": {REFUSALS[k]}"))
     return 0
 
 
@@ -209,6 +209,9 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="taskmine", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
 
+    from taskmine import workflow
+    workflow.register(sub)
+
     def common(p, repo=False):
         p.add_argument("--recipe", required=True, help="the repository recipe, taskmine.toml")
         p.add_argument("--out", required=True, help="the dataset working directory")
@@ -218,6 +221,7 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("scan", help="list change units and candidates")
     common(p, repo=True)
     p.add_argument("--limit", type=int, help="only the newest N change units")
+    p.add_argument("--brief", action="store_true", help="refusal codes only, without their explanations")
     p.set_defaults(fn=cmd_scan)
 
     p = sub.add_parser("meta", help="fetch pull request titles and closing issues from GitHub")
@@ -264,6 +268,13 @@ def main(argv: list[str] | None = None) -> int:
     except config_mod.ConfigError as e:
         print(f"recipe error: {e}", file=sys.stderr)
         return 2
+    except Exception as e:  # the everyday commands' own errors read as one line
+        from taskmine.agents import AgentError
+        from taskmine.project import ProjectError
+        if isinstance(e, (AgentError, ProjectError)):
+            print(f"taskmine: {e}", file=sys.stderr)
+            return 2
+        raise
 
 
 if __name__ == "__main__":
