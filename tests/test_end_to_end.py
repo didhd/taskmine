@@ -34,6 +34,7 @@ image = "node:24-bookworm"
 command = "node --test --test-reporter=junit --test-reporter-destination={junit} --test-reporter=spec --test-reporter-destination=stdout {files}"
 display_command = "node --test {files}"
 timeout_sec = 120
+text_probe = "node"
 """
 
 GIT_ENV = dict(
@@ -104,6 +105,33 @@ def make_repo(root: Path) -> None:
     sh(root, "git", "checkout", "-q", "main")
     sh(root, "git", "merge", "-q", "--no-ff", "refactor", "-m", "Merge pull request #3 from example/refactor")
 
+    # PR 4: one behavioural test and one that greps the source for the fix. Only the first may count.
+    sh(root, "git", "checkout", "-q", "-b", "label")
+    write(root, "lib/calc.mjs", (root / "lib/calc.mjs").read_text() + "\nexport const LABEL = 'calc v2';\n")
+    write(root, "test/label.test.mjs",
+          "import { test } from 'node:test';\nimport assert from 'node:assert/strict';\n"
+          "import { readFileSync } from 'node:fs';\nimport { LABEL } from '../lib/calc.mjs';\n\n"
+          "test('the label names version 2', () => assert.equal(LABEL, 'calc v2'));\n"
+          "test('the label is a const export', () => assert.match("
+          "readFileSync(new URL('../lib/calc.mjs', import.meta.url), 'utf8'), /export const LABEL = /));\n")
+    sh(root, "git", "add", "-A")
+    sh(root, "git", "commit", "-q", "-m", "label")
+    sh(root, "git", "checkout", "-q", "main")
+    sh(root, "git", "merge", "-q", "--no-ff", "label", "-m", "Merge pull request #4 from example/label")
+
+    # PR 5: only a source grep. Nothing behavioural is checked, so it is not a task.
+    sh(root, "git", "checkout", "-q", "-b", "grep")
+    write(root, "lib/calc.mjs", (root / "lib/calc.mjs").read_text() + "// calc: pure functions only\n")
+    write(root, "test/grep.test.mjs",
+          "import { test } from 'node:test';\nimport assert from 'node:assert/strict';\n"
+          "import { readFileSync } from 'node:fs';\n\n"
+          "test('the module says it is pure', () => assert.match("
+          "readFileSync(new URL('../lib/calc.mjs', import.meta.url), 'utf8'), /pure functions only/));\n")
+    sh(root, "git", "add", "-A")
+    sh(root, "git", "commit", "-q", "-m", "grep")
+    sh(root, "git", "checkout", "-q", "main")
+    sh(root, "git", "merge", "-q", "--no-ff", "grep", "-m", "Merge pull request #5 from example/grep")
+
 
 @unittest.skipUnless(shutil.which("node") and shutil.which("git"), "needs node and git")
 class EndToEnd(unittest.TestCase):
@@ -147,11 +175,20 @@ class EndToEnd(unittest.TestCase):
         ])
         self.assertEqual(v1["pass_to_pass"], ["test/calc.test.mjs::adds negatives", "test/calc.test.mjs::adds two numbers"])
         kinds = [r["kind"] for r in v1["runs"]]
-        self.assertEqual(kinds, ["base", "gold", "base", "gold", "gold", "nop", "oracle"])
+        self.assertEqual(kinds, ["base", "gold", "base", "gold", "gold", "textprobe", "nop", "oracle"])
         self.assertEqual([r["reward"] for r in v1["runs"] if r["kind"] in ("nop", "oracle")], [0.0, 1.0])
         v3 = json.loads((self.out / "validation" / "calc-pr3.json").read_text())
         self.assertEqual(v3["verdict"], "rejected")
         self.assertEqual(v3["reason"], "no-fail-to-pass")
+
+    def test_text_probe_separates_source_greps_from_behaviour(self):
+        v4 = json.loads((self.out / "validation" / "calc-pr4.json").read_text())
+        self.assertEqual(v4["verdict"], "accepted", v4)
+        self.assertEqual(v4["fail_to_pass"], ["test/label.test.mjs::the label names version 2"])
+        self.assertEqual(v4["fail_to_pass_source_text"], ["test/label.test.mjs::the label is a const export"])
+        self.assertEqual(v4["text_probe_substituted"], ["lib/calc.mjs"])
+        v5 = json.loads((self.out / "validation" / "calc-pr5.json").read_text())
+        self.assertEqual((v5["verdict"], v5["reason"]), ("rejected", "source-text-only"))
 
     def test_finished_task_is_harbor_shaped_and_passes_check(self):
         task = self.out / "tasks" / "calc-pr1"

@@ -33,6 +33,16 @@ from taskmine.config import Config
 from taskmine.emit import draft_digest
 
 NO_TESTS = "(no tests reported)"
+PROBE = Path(__file__).parent / "templates" / "textprobe.mjs"
+
+
+def _probe_env(app: str, probe: str, logs: str, globs: list[str]) -> dict[str, str]:
+    return {
+        "NODE_OPTIONS": f"--import {probe}",
+        "TASKMINE_APP_DIR": app,
+        "TASKMINE_TEST_GLOBS": json.dumps(globs),
+        "TASKMINE_PROBE_LOG": f"{logs}/textprobe.log",
+    }
 
 
 class DockerExecutor:
@@ -53,7 +63,8 @@ class DockerExecutor:
                 return False
         return p.returncode == 0
 
-    def run(self, tag: str, task: Path, with_solution: bool, logs: Path, prof, name: str) -> dict:
+    def run(self, tag: str, task: Path, with_solution: bool, logs: Path, prof, name: str,
+            probe_globs: list[str] | None = None) -> dict:
         logs.mkdir(parents=True, exist_ok=True)
         os.chmod(logs, 0o777)
         cmd = [
@@ -62,6 +73,10 @@ class DockerExecutor:
             "-v", f"{(task / 'tests').resolve()}:/tests:ro",
             "-v", f"{logs.resolve()}:/logs/verifier",
         ]
+        if probe_globs is not None:
+            cmd += ["-v", f"{PROBE.parent.resolve()}:/taskmine-probe:ro"]
+            for k, v in _probe_env("/app", "/taskmine-probe/" + PROBE.name, "/logs/verifier", probe_globs).items():
+                cmd += ["-e", f"{k}={v}"]
         script = "bash /tests/test.sh"
         if with_solution:
             cmd += ["-v", f"{(task / 'solution').resolve()}:/solution:ro"]
@@ -109,7 +124,8 @@ class LocalExecutor:
             p = subprocess.run(["bash", "-c", script], cwd=template, stdout=out, stderr=subprocess.STDOUT)
         return p.returncode == 0
 
-    def run(self, tag: str, task: Path, with_solution: bool, logs: Path, prof, name: str) -> dict:
+    def run(self, tag: str, task: Path, with_solution: bool, logs: Path, prof, name: str,
+            probe_globs: list[str] | None = None) -> dict:
         template = self.scratch / tag.replace("/", "_").replace(":", "_") / "app"
         app = self.scratch / "runs" / name / "app"
         if app.parent.exists():
@@ -120,6 +136,8 @@ class LocalExecutor:
             os.environ, TASKMINE_APP=str(app), TASKMINE_SOLUTION=str((task / "solution").resolve()),
             TASKMINE_LOGS=str(logs.resolve()),
         )
+        if probe_globs is not None:
+            env.update(_probe_env(str(app), str(PROBE.resolve()), str(logs.resolve()), probe_globs))
         t0 = time.time()
         with open(logs / "docker.log", "wb") as out:
             if with_solution:
@@ -220,11 +238,15 @@ def validate_one(cfg: Config, draft: Path, ex, base_runs: int, gold_runs: int, k
 
     n = {"i": 0}
 
-    def run(kind: str, with_solution: bool) -> dict:
+    def run(kind: str, with_solution: bool, probe: bool = False) -> dict:
         n["i"] += 1
         name = f"tm-{cand['id']}-{digest[:8]}-{n['i']}"
-        r = ex.run(tag, draft, with_solution, vdir / f"{n['i']:02d}-{kind}", prof, name)
+        logs = vdir / f"{n['i']:02d}-{kind}"
+        r = ex.run(tag, draft, with_solution, logs, prof, name, cfg.tests.patterns if probe else None)
         result["runs"].append(_summ(kind, r))
+        if probe:
+            read = logs / "textprobe.log"
+            r["substituted"] = sorted(set(read.read_text().split())) if read.exists() else []
         return r
 
     bases = [run("base", False)]
@@ -239,9 +261,15 @@ def validate_one(cfg: Config, draft: Path, ex, base_runs: int, gold_runs: int, k
     a = analyse(bases, golds)
     if not a["fail_to_pass"]:
         return done("rejected", "fail-to-pass-was-flaky", **a)
-    coupled = info.get("source_text_reads") or {}
-    if coupled and not cfg.allow_source_text:
-        text_tests = [t for t in a["fail_to_pass"] if t.split("::", 1)[0] in coupled]
+    if not cfg.allow_source_text and prof.text_probe != "off":
+        if prof.text_probe == "node":
+            # Gold state, but test code that reads a changed source file gets the base text.
+            tp = run("textprobe", True, probe=True)
+            text_tests = [t for t in a["fail_to_pass"] if tp["statuses"].get(t) != "passed"]
+            a["text_probe_substituted"] = tp.get("substituted", [])
+        else:
+            coupled = info.get("source_text_reads") or {}
+            text_tests = [t for t in a["fail_to_pass"] if t.split("::", 1)[0] in coupled]
         a["fail_to_pass_source_text"] = text_tests
         a["fail_to_pass"] = [t for t in a["fail_to_pass"] if t not in set(text_tests)]
         if not a["fail_to_pass"]:

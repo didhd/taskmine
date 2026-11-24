@@ -58,6 +58,7 @@ class Profile:
     memory_mb: int
     env: dict[str, str]
     setup: str | None
+    text_probe: str = "static"
 
 
 @dataclass
@@ -103,7 +104,7 @@ _SECTIONS = {
 }
 _PROFILE_KEYS = {
     "name", "run", "image", "workdir", "command", "display_command", "install", "deps",
-    "deps_normalize", "timeout_sec", "cpus", "memory_mb", "env", "setup",
+    "deps_normalize", "timeout_sec", "cpus", "memory_mb", "env", "setup", "text_probe",
 }
 
 
@@ -147,6 +148,8 @@ def load(path: str | Path) -> Config:
                 f"{path} profile {p['name']!r}: command must contain {{files}} (the test files to run) "
                 "and {junit} (where the runner writes its JUnit XML report)"
             )
+        if p.get("text_probe", "static") not in ("node", "static", "off"):
+            raise ConfigError(f"{path} profile {p['name']!r}: text_probe must be 'node', 'static' or 'off'")
         norm = p.get("deps_normalize")
         if norm not in (None, "npm"):
             raise ConfigError(f"{path} profile {p['name']!r}: deps_normalize must be 'npm' or absent")
@@ -166,6 +169,7 @@ def load(path: str | Path) -> Config:
                 memory_mb=int(p.get("memory_mb", 4096)),
                 env={str(k): str(v) for k, v in p.get("env", {}).items()},
                 setup=p.get("setup"),
+                text_probe=p.get("text_probe", "static"),
             )
         )
     if not profiles:
