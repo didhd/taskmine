@@ -31,8 +31,8 @@ REFUSALS = {
     "gold-too-large": "The gold change exceeds [limits] max_gold_files or max_gold_lines.",
     "too-many-run-files": "It changes more runnable test files than [limits] max_run_files.",
     "large-file": (
-        "It changes a file larger than [snapshot] max_file_bytes. Snapshots leave such files out, "
-        "so the gold patch could not apply."
+        "It changes a file larger than [limits] max_changed_file_bytes, or one whose content this "
+        "clone does not hold (a filtered clone)."
     ),
     "submodule-change": "It changes a submodule pointer, which a snapshot cannot carry.",
 }
@@ -152,7 +152,7 @@ def classify(repo: Repo, cfg: Config, cand: Candidate) -> Candidate:
     sizes = repo.blob_sizes([s for ch in changes for s in (ch.old_sha, ch.new_sha)])
     big = [
         ch.path for ch in changes
-        if any((sizes.get(s) or 0) > cfg.max_file_bytes for s in (ch.old_sha, ch.new_sha))
+        if any((sizes.get(s) or 0) > cfg.max_changed_file_bytes for s in (ch.old_sha, ch.new_sha))
         or any(s in sizes and sizes[s] is None for s in (ch.old_sha, ch.new_sha))
     ]
     if big:

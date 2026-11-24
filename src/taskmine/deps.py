@@ -16,16 +16,32 @@ import json
 
 
 def normalize_npm(path: str, data: bytes) -> bytes:
+    """Drop the versions of the repository's OWN packages: the root, and in a lockfile every entry
+    that is a workspace folder (a key not under node_modules/). Third-party versions are kept."""
     name = path.rsplit("/", 1)[-1]
     if name not in ("package.json", "package-lock.json"):
         return data
     obj = json.loads(data)
     obj.pop("version", None)
     if name == "package-lock.json":
-        root = obj.get("packages", {}).get("")
-        if isinstance(root, dict):
-            root.pop("version", None)
+        for key, entry in (obj.get("packages") or {}).items():
+            if isinstance(entry, dict) and not key.startswith("node_modules/") and "/node_modules/" not in key:
+                entry.pop("version", None)
     return (json.dumps(obj, indent=2, ensure_ascii=False) + "\n").encode()
+
+
+def expand(patterns: list[str], paths: set[str]) -> list[str]:
+    """Literal paths are required; a pattern with `*` matches zero or more files."""
+    from taskmine.globs import compile_glob
+
+    out: list[str] = []
+    for pat in patterns:
+        if "*" in pat or "?" in pat:
+            rx = compile_glob(pat)
+            out += sorted(p for p in paths if rx.match(p))
+        else:
+            out.append(pat)
+    return list(dict.fromkeys(out))
 
 
 def materialize(files: dict[str, bytes], normalize: str | None) -> tuple[dict[str, bytes], str]:

@@ -22,6 +22,11 @@ _ENV = dict(
 
 NULL_SHA = "0" * 40
 
+# The size given to a blob a filtered clone does not hold. A snapshot treats it as over the size cap,
+# which it is whenever the clone's blob filter is above [snapshot] max_file_bytes: then a draft built
+# from the filtered clone is byte-identical to one built from a full clone.
+MISSING_SIZE = 1 << 62
+
 
 class GitError(RuntimeError):
     pass
@@ -85,15 +90,9 @@ class Repo:
                 continue
             meta, path = rec.split(b"\t", 1)
             mode, kind, sha, size = meta.split()
-            entries.append(
-                TreeEntry(
-                    mode.decode(),
-                    kind.decode(),
-                    sha.decode(),
-                    None if size == b"-" else int(size),
-                    decode_path(path),
-                )
-            )
+            # `BAD` is a blob this (filtered) clone does not hold; MISSING_SIZE sorts above every cap.
+            n = None if size == b"-" else MISSING_SIZE if size == b"BAD" else int(size)
+            entries.append(TreeEntry(mode.decode(), kind.decode(), sha.decode(), n, decode_path(path)))
         return entries
 
     def blob_sizes(self, shas: list[str]) -> dict[str, int | None]:

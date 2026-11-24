@@ -43,6 +43,13 @@ def _write(path: Path, data: bytes | str, mode: int = 0o644) -> None:
     os.chmod(path, mode)
 
 
+def _link_or_copy(src: str, dst: str) -> None:
+    try:
+        os.link(src, dst)
+    except OSError:
+        shutil.copy2(src, dst)
+
+
 def draft_digest(task_dir: Path) -> str:
     """sha256 over every file the environment, the oracle and the verifier read."""
     h = hashlib.sha256()
@@ -79,7 +86,10 @@ def build_draft(repo: Repo, cfg: Config, cand: Candidate, meta: dict | None, out
     after_tree = {e.path: e.sha for e in after_entries if e.kind == "blob"}
     after_modes = {e.path: e.mode for e in after_entries if e.kind == "blob"}
 
-    keep = {p for p in cand.gold_files if p in base_tree} | {p for p in prof.deps if p in base_tree}
+    from taskmine.deps import expand
+
+    dep_paths = expand(prof.deps, set(base_tree))
+    keep = {p for p in cand.gold_files if p in base_tree} | {p for p in dep_paths if p in base_tree}
     snap = snapshot.build(repo, cfg, cand.base, keep)
     after_only = {after_tree[p] for p in cand.gold_files + cand.test_files if p in after_tree}
     after_only -= set(base_tree.values())
@@ -89,11 +99,14 @@ def build_draft(repo: Repo, cfg: Config, cand: Candidate, meta: dict | None, out
 
     gold_patch = repo.patch(cand.base, cand.after, cand.gold_files)
     test_blobs = repo.cat_blobs([after_tree[p] for p in cand.test_files])
-    missing_deps = [p for p in prof.deps if p not in base_tree]
+    missing_deps = [p for p in dep_paths if p not in base_tree]
     if missing_deps:
         raise DraftError("deps-missing", ", ".join(missing_deps))
-    dep_blobs = repo.cat_blobs([base_tree[p] for p in prof.deps])
-    dep_files, fingerprint = materialize({p: dep_blobs[base_tree[p]] for p in prof.deps}, prof.deps_normalize)
+    dep_blobs = repo.cat_blobs([base_tree[p] for p in dep_paths])
+    dep_files, manifests = materialize({p: dep_blobs[base_tree[p]] for p in dep_paths}, prof.deps_normalize)
+    # The cached layer is the base image, the setup step, the manifests and the install command.
+    fingerprint = hashlib.sha256(
+        "\0".join([prof.image, prof.setup or "", prof.install or "", manifests]).encode()).hexdigest()
 
     sources = {}
     for p in cand.test_files:
@@ -196,7 +209,10 @@ def finalize(cfg: Config, draft: Path, validation: dict, tasks_root: Path) -> di
     if out.exists():
         shutil.rmtree(out)
     for part in DIGEST_PARTS:
-        shutil.copytree(draft / part, out / part, symlinks=True)
+        # Hard links: a finished task shares the draft's bytes (the snapshot alone is ~80 MB a task).
+        shutil.copytree(draft / part, out / part, symlinks=True, copy_function=_link_or_copy)
+    if (out / "tests" / "expected.json").exists():
+        (out / "tests" / "expected.json").unlink()
     _write(out / "tests" / "expected.json", json.dumps(
         {"fail_to_pass": f2p, "pass_to_pass": p2p}, indent=1) + "\n")
     _write(out / "instruction.md", text)

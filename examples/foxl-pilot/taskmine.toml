@@ -1,0 +1,83 @@
+# The recipe taskmine is dogfooded on: foxl-ai/pilot, a private TypeScript monorepo whose pull requests
+# land through merge trains. Each train member lands as `Merge PR #<n> (<sha>)` on a train branch, and
+# that merge commit is the change unit (base = the train tip before it). Direct merges to main are
+# `Merge pull request #<n> from <branch>`; the train merges themselves are left out because their
+# members are already units.
+
+[repo]
+name = "foxl-ai/pilot"
+github = "foxl-ai/pilot"
+
+[units]
+kind = "merges"
+branch = "main"
+since = "2026-06-01"
+pr_patterns = ['^Merge PR #(\d+) \(', '^Merge pull request #(\d+) from (?!foxl-ai/train/)']
+
+[snapshot]
+# Text files up to 8 MB stay: foxl/server/api/server.ts and foxl/CHANGELOG.md are over 1 MB and
+# the first is source every server test imports. Binary files are left out whatever their size.
+max_file_bytes = 8000000
+# Marketing media and archived social assets: 660 MB of the 1.35 GB tree, nothing a coding agent reads.
+exclude = ["site/landing/public/**", "site/landing/archive/**", "marketing/**"]
+
+[tests]
+paths = ["**/tests/**", "**/test/**", "**/__tests__/**", "**/*.test.*", "**/*.spec.*", "**/*.probe.mjs"]
+
+[limits]
+max_gold_files = 40
+max_gold_lines = 2000
+max_run_files = 6
+
+[task]
+agent_timeout_sec = 3600
+
+# Foxl Desktop's server tests: `cd foxl && npx tsx --test tests/<name>.test.mjs`, written red-first
+# (each names the head it was red on). They import the TypeScript sources directly through tsx.
+[[profiles]]
+name = "foxl-node-test"
+run = ["foxl/tests/*.test.mjs"]
+image = "node:24-bookworm"
+workdir = "foxl"
+deps = ["foxl/package.json", "foxl/package-lock.json"]
+deps_normalize = "npm"
+install = "cd /app/foxl && npm ci --ignore-scripts --no-audit --no-fund"
+command = "node_modules/.bin/tsx --test --test-concurrency=1 --test-reporter=junit --test-reporter-destination={junit} --test-reporter=spec --test-reporter-destination=stdout {files}"
+display_command = "npx tsx --test {files}"
+timeout_sec = 900
+cpus = 2
+memory_mb = 6144
+
+# Foxl Code's orchestrator (forge/server): `cd forge/server && npx tsx --test test/<name>.test.mjs`.
+# It is a root npm workspace, so the install reads the root lockfile and every workspace manifest,
+# and installs only this workspace's tree.
+[[profiles]]
+name = "forge-server-node-test"
+run = ["forge/server/test/*.test.mjs"]
+image = "node:24-bookworm"
+workdir = "forge/server"
+deps = ["package.json", "package-lock.json", "relay/package.json", "forge/server/package.json",
+        "site/landing/package.json", "docs/package.json", "packages/*/package.json"]
+deps_normalize = "npm"
+install = "cd /app && npm ci --ignore-scripts --no-audit --no-fund --workspace forge/server"
+command = "npx --no tsx --test --test-concurrency=1 --test-reporter=junit --test-reporter-destination={junit} --test-reporter=spec --test-reporter-destination=stdout {files}"
+display_command = "npx tsx --test {files}"
+timeout_sec = 900
+cpus = 2
+memory_mb = 6144
+
+# Foxl Code's pages (packages/code): `cd packages/code && node --test test/<name>.test.mjs`.
+[[profiles]]
+name = "code-pages-node-test"
+run = ["packages/code/test/*.test.mjs"]
+image = "node:24-bookworm"
+workdir = "packages/code"
+deps = ["package.json", "package-lock.json", "relay/package.json", "forge/server/package.json",
+        "site/landing/package.json", "docs/package.json", "packages/*/package.json"]
+deps_normalize = "npm"
+install = "cd /app && npm ci --ignore-scripts --no-audit --no-fund --workspace packages/code"
+command = "node --test --test-concurrency=1 --test-reporter=junit --test-reporter-destination={junit} --test-reporter=spec --test-reporter-destination=stdout {files}"
+display_command = "node --test {files}"
+timeout_sec = 900
+cpus = 2
+memory_mb = 6144

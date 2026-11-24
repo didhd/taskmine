@@ -83,7 +83,10 @@ def split_source(path: str, text: str) -> tuple[str, list[tuple[str, bool]]]:
                 buf.append(text[j])
                 j += 1
             is_title = bool(_TITLE_CALL.search("".join(code[-40:])))
-            strings.append(("".join(buf), is_title))
+            value = "".join(buf)
+            # A template literal with an interpolation is not exact text: its value exists only at run time.
+            if not (q == "`" and "${" in value):
+                strings.append((value, is_title))
             code.append(" ")
             i = j + len(q)
         else:
@@ -136,7 +139,7 @@ def extract(
         declared = set(_DECL.findall(code))
         for tok in _IDENT.findall(code):
             if (
-                len(tok) >= 4 and tok not in _KEYWORDS and tok not in declared
+                len(tok) >= 4 and re.search(r"[A-Za-z]", tok) and tok not in _KEYWORDS and tok not in declared
                 and tok in gold_names and tok not in names
                 and not _present(base_text, tok, word=True)
             ):

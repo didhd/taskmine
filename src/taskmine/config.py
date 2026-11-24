@@ -77,6 +77,7 @@ class Config:
     max_gold_files: int
     max_gold_lines: int
     max_run_files: int
+    max_changed_file_bytes: int
     profiles: list[Profile] = field(default_factory=list)
     agent_timeout_sec: float = 3600.0
     storage_mb: int = 20480
@@ -95,7 +96,7 @@ _SECTIONS = {
     "units": {"kind", "branch", "since", "pr_patterns"},
     "snapshot": {"max_file_bytes", "exclude", "binary_ext"},
     "tests": {"paths", "docs"},
-    "limits": {"max_gold_files", "max_gold_lines", "max_run_files"},
+    "limits": {"max_gold_files", "max_gold_lines", "max_run_files", "max_changed_file_bytes"},
     "task": {"agent_timeout_sec", "storage_mb", "include_issue", "issue_max_chars"},
     "profiles": None,
 }
@@ -179,7 +180,7 @@ def load(path: str | Path) -> Config:
         pr_patterns=list(
             units.get("pr_patterns", [r"^Merge pull request #(\d+) from ", r"\(#(\d+)\)$"])
         ),
-        max_file_bytes=int(snap.get("max_file_bytes", 1_000_000)),
+        max_file_bytes=int(snap.get("max_file_bytes", 5_000_000)),
         snapshot_exclude=GlobSet(snap.get("exclude", [])),
         binary_ext=frozenset(e.lower() for e in snap.get("binary_ext", DEFAULT_BINARY_EXT)),
         tests=GlobSet(tests.get("paths", DEFAULT_TEST_PATHS)),
@@ -187,6 +188,7 @@ def load(path: str | Path) -> Config:
         max_gold_files=int(limits.get("max_gold_files", 40)),
         max_gold_lines=int(limits.get("max_gold_lines", 2000)),
         max_run_files=int(limits.get("max_run_files", 6)),
+        max_changed_file_bytes=int(limits.get("max_changed_file_bytes", 20_000_000)),
         profiles=profiles,
         agent_timeout_sec=float(task.get("agent_timeout_sec", 3600)),
         storage_mb=int(task.get("storage_mb", 20480)),
