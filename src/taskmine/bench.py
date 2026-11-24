@@ -92,7 +92,7 @@ def collect(job: Path) -> dict:
 def summarize(bench_dir: Path, project_agents: list[dict]) -> dict:
     out = {"agents": []}
     by_name = {a["name"]: a for a in project_agents}
-    for job in sorted(p for p in bench_dir.iterdir() if p.is_dir() and p.name != "tasks"):
+    for job in sorted(p for p in bench_dir.iterdir() if p.is_dir() and not p.name.startswith("tasks")):
         rows = collect(job)
         if not rows:
             continue

@@ -317,7 +317,7 @@ class BuildGate:
 def validate_all(cfg: Config, drafts: list[Path], ex, jobs: int, base_runs: int, gold_runs: int,
                  keep_image: bool, summary_dir: Path, log=print) -> list[dict]:
     summary_dir.mkdir(parents=True, exist_ok=True)
-    gate = BuildGate()
+    gate = BuildGate() if getattr(ex, "shares_build_cache", True) else None
     results = []
     with ThreadPoolExecutor(max_workers=jobs) as pool:
         futs = {pool.submit(validate_one, cfg, d, ex, base_runs, gold_runs, keep_image, gate): d for d in drafts}

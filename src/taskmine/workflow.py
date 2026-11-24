@@ -215,7 +215,7 @@ def cmd_verify(a) -> int:
     from taskmine import cli
     proj = project_mod.load()
     r, o = str(proj.recipe), str(proj.out)
-    rc = cli.cmd_validate(_ns(recipe=r, out=o, ids=None, executor="docker", docker="docker", scratch=None,
+    rc = cli.cmd_validate(_ns(recipe=r, out=o, ids=None, executor=a.env, docker="docker", scratch=None, platform=a.platform,
                               jobs=a.jobs, base_runs=2, gold_runs=3, keep_images=True, skip_done=True))
     if rc:
         return rc
@@ -228,24 +228,57 @@ def cmd_verify(a) -> int:
     return rc
 
 
+BUILTIN_AGENTS = {  # Harbor's reference agents: the gold patch, and doing nothing
+    "oracle": {"name": "oracle", "agent": "oracle", "provider": "-", "model": "gold patch"},
+    "nop": {"name": "nop", "agent": "nop", "provider": "-", "model": "does nothing"},
+}
+
+
+def _chosen_agents(proj, names: str | None) -> list[dict]:
+    if not names:
+        return list(proj.agents)
+    wanted = names.split(",")
+    known = {x["name"]: x for x in proj.agents} | {k: v for k, v in BUILTIN_AGENTS.items()}
+    missing = [n for n in wanted if n not in known]
+    if missing:
+        raise agents_mod.AgentError(f"no agent named {', '.join(missing)} (taskmine agents list)")
+    return [known[n] for n in wanted]
+
+
 def cmd_bench(a) -> int:
     proj = project_mod.load()
-    if not proj.agents:
+    chosen = _chosen_agents(proj, a.agents)
+    if not chosen:
         print("no agents: taskmine agents add ...")
         return 1
-    chosen = [x for x in proj.agents if not a.agents or x["name"] in a.agents.split(",")]
     run_dir = proj.out / "bench" / a.run
     run_dir.mkdir(parents=True, exist_ok=True)
     tasks = bench_mod.pick_tasks(proj.out / "tasks", a.tasks, a.seed, run_dir)
     n = len([p for p in tasks.iterdir() if (p / "task.toml").exists()])
-    ok(f"bench {c('1', a.run)}: {len(chosen)} agents x {n} tasks, {a.concurrency} at a time")
-    procs = {x["name"]: bench_mod.start_agent(x, tasks, run_dir, a.concurrency, a.region, print, proj.root)
-             for x in chosen}
+    where = f"AgentCore Runtime ({a.platform}, arm64)" if a.env == "agentcore" else "Docker"
+    ok(f"bench {c('1', a.run)}: {len(chosen)} agents x {n} tasks on {where}, {a.concurrency} at a time per agent")
+    if a.env == "agentcore":
+        from taskmine import agentcore as ac
+        ac.check_agents(chosen)
+        tasks = ac.prepare(tasks, run_dir / "tasks-agentcore")
+        info(f"images: one per task, built on CodeBuild and deployed as an AgentCore runtime ({a.build_jobs} at a time)")
+        built = ac.prebuild(proj.root, tasks, a.build_jobs, a.platform, print)
+        for r in built:
+            if not r["ok"]:
+                shutil.rmtree(tasks / r["task"])
+        if not any((p / "task.toml").exists() for p in tasks.iterdir()):
+            print("no task image could be built")
+            return 1
+        procs = {x["name"]: ac.start_agent(x, tasks, run_dir, a.concurrency, proj.root, a.platform, print)
+                 for x in chosen}
+    else:
+        procs = {x["name"]: bench_mod.start_agent(x, tasks, run_dir, a.concurrency, a.region, print, proj.root)
+                 for x in chosen}
     codes = bench_mod.watch(procs, run_dir, print)
     for name, code in codes.items():
         if code:
             info(f"{name}: harbor exited {code} (log: {run_dir / (name + '.harbor.log')})")
-    s = bench_mod.summarize(run_dir, proj.agents)
+    s = bench_mod.summarize(run_dir, [*proj.agents, *BUILTIN_AGENTS.values()])
     (run_dir / "results.json").write_text(json.dumps(s, indent=1) + "\n")
     print()
     print(bench_mod.table(s))
@@ -261,7 +294,7 @@ def cmd_results(a) -> int:
         return 1
     # The latest run is the one that finished last, not the last name in sort order.
     run = base / a.run if a.run else max(runs, key=lambda p: (p / "results.json").stat().st_mtime)
-    s = bench_mod.summarize(run, proj.agents)
+    s = bench_mod.summarize(run, [*proj.agents, *BUILTIN_AGENTS.values()])
     print(c("1", f"run {run.name}"))
     print(bench_mod.table(s))
     return 0
@@ -300,8 +333,10 @@ def register(sub) -> None:
     p.add_argument("--jobs", type=int, default=4)
     p.set_defaults(fn=cmd_mine)
 
-    p = sub.add_parser("verify", help="run the drafts in Docker and keep what execution proves")
+    p = sub.add_parser("verify", help="run every draft (AgentCore or Docker) and keep what execution proves")
     p.add_argument("--jobs", type=int, default=8)
+    p.add_argument("--env", choices=["agentcore", "docker"], default="agentcore")
+    p.add_argument("--platform", choices=["V1", "V2"], default="V1")
     p.set_defaults(fn=cmd_verify)
 
     p = sub.add_parser("bench", help="run every agent over the tasks with Harbor")
@@ -310,9 +345,32 @@ def register(sub) -> None:
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("-n", "--concurrency", type=int, default=4)
     p.add_argument("--run", default="latest", help="run name (directory under .taskmine/out/bench)")
-    p.add_argument("--region", default=os.environ.get("AWS_REGION", "us-west-2"))
+    p.add_argument("--env", choices=["agentcore", "docker"], default="agentcore",
+                   help="where trials run: AgentCore Runtime sessions (default) or this Docker host")
+    p.add_argument("--platform", choices=["V1", "V2"], default="V1",
+                   help="AgentCore platform version for new runtimes (V1: images up to ~2 GB compressed; V2: 10 GB)")
+    p.add_argument("--build-jobs", type=int, default=6, help="AgentCore: image builds at a time")
+    p.add_argument("--region", default=os.environ.get("AWS_REGION", "us-west-2"), help="Docker: the gateway's region")
     p.set_defaults(fn=cmd_bench)
 
     p = sub.add_parser("results", help="the latest bench run as a table")
     p.add_argument("--run")
     p.set_defaults(fn=cmd_results)
+
+    p = sub.add_parser("agentcore", help="the AWS side of `bench --env agentcore`: setup, resources, teardown")
+    p.add_argument("action", choices=["setup", "resources", "teardown"])
+    p.set_defaults(fn=cmd_agentcore)
+
+
+def cmd_agentcore(a) -> int:
+    from taskmine import agentcore as ac
+    proj = project_mod.load()
+    if a.action == "setup":
+        rc = ac.setup(proj.root, proj.agents, info)
+        if rc == 0:
+            ok(f"AgentCore ready in {ac.REGION}: resources prefixed {ac.PREFIX}; remove them with `taskmine agentcore teardown`")
+        return rc
+    ac.ensure_venv(proj.root, info)
+    if not ac.harness(proj.root).exists():
+        ac.install_harness(proj.root, ac.agent_models(proj.agents)[0])
+    return ac.resources(proj.root) if a.action == "resources" else ac.teardown(proj.root)

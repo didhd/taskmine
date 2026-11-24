@@ -154,6 +154,9 @@ def cmd_validate(a) -> int:
     drafts = [g[i] for i in range(width) for g in order if i < len(g)]
     if a.executor == "docker":
         ex = validate.DockerExecutor(a.docker)
+    elif a.executor == "agentcore":
+        from taskmine import agentcore
+        ex = agentcore.AgentCoreExecutor(Path(".taskmine"), getattr(a, "platform", "V1"))
     else:
         ex = validate.LocalExecutor(Path(a.scratch or (out / "scratch")))
     res = validate.validate_all(cfg, drafts, ex, a.jobs, a.base_runs, a.gold_runs, a.keep_images, out / "validation")
@@ -250,7 +253,8 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("validate", help="execute drafts and decide fail-to-pass / pass-to-pass")
     common(p)
     p.add_argument("--ids", nargs="*")
-    p.add_argument("--executor", choices=["docker", "local"], default="docker")
+    p.add_argument("--executor", choices=["docker", "agentcore", "local"], default="docker")
+    p.add_argument("--platform", choices=["V1", "V2"], default="V1", help="agentcore executor: platform version")
     p.add_argument("--docker", default="docker")
     p.add_argument("--scratch", help="local executor scratch directory")
     p.add_argument("--jobs", type=int, default=4)
