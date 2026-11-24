@@ -23,6 +23,10 @@ from dataclasses import asdict, dataclass, field
 
 MAX_NAMES = 25
 MAX_STRINGS = 20
+# Each check scans the whole base snapshot (hundreds of MB in a monorepo). A test file with thousands
+# of literals that the gold change also contains (a large fixture) would take minutes, so at most
+# this many candidates of each kind are checked; the contract is then marked truncated.
+MAX_CHECKS = 150
 
 _IDENT = re.compile(r"[A-Za-z_$][A-Za-z0-9_$]*")
 _TITLE_CALL = re.compile(r"\b(?:test|it|describe|suite|context|subtest)(?:\.\w+)*\s*\(\s*$")
@@ -131,6 +135,17 @@ def extract(
     gold_added: str,
 ) -> Contract:
     gold_names = set(_IDENT.findall(gold_added))
+    checks = {"names": 0, "text": 0}
+    over = False
+
+    def budget(kind: str) -> bool:
+        nonlocal over
+        checks[kind] += 1
+        if checks[kind] > MAX_CHECKS:
+            over = True
+            return False
+        return True
+
     names: dict[str, None] = {}
     texts: dict[str, None] = {}
     modules: dict[str, None] = {}
@@ -140,7 +155,7 @@ def extract(
         for tok in _IDENT.findall(code):
             if (
                 len(tok) >= 4 and re.search(r"[A-Za-z]", tok) and tok not in _KEYWORDS and tok not in declared
-                and tok in gold_names and tok not in names
+                and tok in gold_names and tok not in names and budget("names")
                 and not _present(base_text, tok, word=True)
             ):
                 names[tok] = None
@@ -148,7 +163,7 @@ def extract(
             s_clean = s.strip()
             if (
                 not is_title and 4 <= len(s_clean) <= 160 and re.search(r"[A-Za-z0-9]", s_clean)
-                and s_clean not in texts and s_clean in gold_added
+                and s_clean not in texts and s_clean in gold_added and budget("text")
                 and not _present(base_text, s_clean, word=False)
             ):
                 texts[s_clean] = None
@@ -163,7 +178,7 @@ def extract(
         new_modules=sorted(modules),
         exact_text=list(texts)[:MAX_STRINGS],
     )
-    c.truncated = len(names) > MAX_NAMES or len(texts) > MAX_STRINGS
+    c.truncated = over or len(names) > MAX_NAMES or len(texts) > MAX_STRINGS
     return c
 
 
