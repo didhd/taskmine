@@ -9,9 +9,17 @@ from yours: every merged pull request that changed code together with its tests 
 kept only when execution proves it. The new tests must fail without the change, pass with it in every
 repeated run, and Harbor's do-nothing agent must score 0 while its oracle scores 1.
 
-**Demo** (a real terminal session, recorded with [demo/record.py](demo/record.py); only idle time is
-shortened): [the video is attached to issue #1](https://github.com/didhd/taskmine/issues/1). To
-replay the recording in a terminal, run `asciinema play docs/demo.cast`.
+https://github.com/user-attachments/assets/237d1e33-05db-476f-84aa-8eb8b06a2e5a
+
+**About the demo.** It is a real terminal session: every command was typed and then run, and every
+line of output is what the command printed. Part 1 ran on a laptop and part 2 on a Docker host.
+- Waits longer than 1.5 s were cut to 1.5 s. For example, `bench` took 10 min 22 s, as its own
+  `[mm:ss]` stamps show.
+- Two whole commands were dropped:
+  - a first `gateway` start whose LiteLLM process had not come up;
+  - a `results` that showed the older run (since fixed, and re-recorded).
+
+To replay the recording in a terminal, run `asciinema play docs/demo.cast`.
 
 ## Quick start
 
