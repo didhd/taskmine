@@ -170,13 +170,14 @@ def cmd_gateway(a) -> int:
         time.sleep(1.0)
         print((proj.root / "gateway.log").read_text().rstrip())
         return 0 if (proj.root / "gateway.toml").exists() else 1
-    codex = sorted({x["model"] for x in proj.agents if x["agent"] == "codex" and x["provider"] == "bedrock"})
+    codex = sorted({x["model"] for x in proj.agents
+                    if x["agent"] in agents_mod.OPENAI_PROTOCOL and x["provider"] == "bedrock"})
     advertise = a.advertise or _host_ip()
     endpoint = a.endpoint or f"https://bedrock-runtime.{a.region}.amazonaws.com"
     g = gateway.start(proj.root, a.listen, advertise, a.port, a.region, endpoint, codex)
     ok(f"gateway on {advertise}: Bedrock pass-through for Claude Code at {g['bedrock_url']}")
     if codex:
-        info(f"OpenAI Responses for Codex at {g['openai_url']} ({', '.join(codex)}, via LiteLLM)")
+        info(f"OpenAI API for Codex, OpenCode, Strands at {g['openai_url']} ({', '.join(codex)}, via LiteLLM)")
     info(f"upstream {endpoint} ({a.region}); credentials stay on this host")
     sys.stdout.flush()
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))

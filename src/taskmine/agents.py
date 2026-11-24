@@ -36,14 +36,17 @@ CATALOG: dict[str, Kind] = {
     "codex": Kind("codex", ("bedrock", "openai"), "OpenAI's Codex CLI"),
     "cursor": Kind("cursor-cli", ("cursor",), "Cursor's agent CLI"),
     "gemini": Kind("gemini-cli", ("google",), "Google's Gemini CLI"),
-    "strands": Kind("strands", ("bedrock",), "Strands Agents SDK"),
-    "opencode": Kind("opencode", ("anthropic", "openai", "bedrock"), "OpenCode"),
+    "strands": Kind("strands", ("bedrock", "openai"), "Strands Agents SDK"),
+    "opencode": Kind("opencode", ("bedrock", "anthropic", "openai"), "OpenCode"),
     "aider": Kind("aider", ("anthropic", "openai"), "Aider"),
     "goose": Kind("goose", ("anthropic", "openai", "bedrock"), "Goose"),
 }
 
 # Only these pairs have been run end to end; the rest are passed to Harbor as they are.
 VERIFIED = {("claude-code", "bedrock"), ("codex", "bedrock")}
+
+# Agents that speak an OpenAI API: on Bedrock they reach the model through the gateway's LiteLLM.
+OPENAI_PROTOCOL = {"codex", "opencode", "strands"}
 
 
 def entry(agent: str, provider: str, model: str, name: str | None, env: dict[str, str]) -> dict:
@@ -55,7 +58,7 @@ def entry(agent: str, provider: str, model: str, name: str | None, env: dict[str
     m = model.split("/")[-1].lower()
     m = re.sub(r"^(us|eu|apac|jp|au|global)\.", "", m)        # cross-region inference profile prefix
     m = re.sub(r"^(anthropic|openai|meta|amazon|mistral|deepseek|qwen)\.", "", m)
-    m = re.sub(r"^claude-", "", m) if agent == "claude-code" else m
+    m = re.sub(r"^claude-", "", m)
     slug = re.sub(r"[^a-z0-9.]+", "-", m).strip("-")
     return {"name": name or f"{agent}-{slug}", "agent": agent, "provider": provider, "model": model,
             "env": dict(env)}
@@ -109,11 +112,22 @@ def harbor_args(a: dict, region: str, root=".taskmine") -> tuple[list[str], dict
                       ANTHROPIC_BEDROCK_BASE_URL=gw["bedrock_url"], AWS_REGION=gw.get("region", region))
         else:
             args += ["-m", model]
-    elif a["agent"] == "codex":
-        args += ["-m", model]
-        if provider == "bedrock":
-            if "openai_url" not in gw:
-                raise AgentError("the gateway has no OpenAI endpoint: restart it after adding the codex agent")
+    elif a["agent"] in OPENAI_PROTOCOL and provider == "bedrock":
+        if "openai_url" not in gw:
+            raise AgentError(f"the gateway has no OpenAI endpoint: restart it after adding the {a['agent']} agent")
+        if a["agent"] == "opencode":
+            # OpenCode's own provider config: an OpenAI-compatible provider pointing at the gateway.
+            cfg = {"provider": {"gateway": {
+                "npm": "@ai-sdk/openai-compatible", "name": "taskmine gateway",
+                "options": {"baseURL": gw["openai_url"], "apiKey": "{env:TASKMINE_GATEWAY_KEY}"},
+                "models": {model: {"name": model}}}}}
+            args += ["-m", f"gateway/{model}", "--ak", "opencode_config=" + json.dumps(cfg, separators=(",", ":"))]
+            ae["TASKMINE_GATEWAY_KEY"] = gw["openai_key"]
+        elif a["agent"] == "strands":
+            args += ["-m", f"openai/{model}"]
+            env.update(OPENAI_BASE_URL=gw["openai_url"], OPENAI_API_KEY=gw["openai_key"])
+        else:
+            args += ["-m", model]
             env.update(OPENAI_BASE_URL=gw["openai_url"], OPENAI_API_KEY=gw["openai_key"])
     else:
         args += ["-m", model]
