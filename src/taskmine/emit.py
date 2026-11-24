@@ -231,6 +231,7 @@ def finalize(cfg: Config, draft: Path, validation: dict, tasks_root: Path) -> di
         "issue": issue["number"] if issue else 0,
         "fail_to_pass": len(f2p),
         "pass_to_pass": len(p2p),
+        "fail_to_pass_source_text_dropped": len(validation.get("fail_to_pass_source_text", [])),
         "gold_files": len(cand.gold_files),
         "gold_lines": cand.gold_lines,
         "contract_names": len(con.new_names),

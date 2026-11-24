@@ -131,9 +131,16 @@ def cmd_validate(a) -> int:
         drafts = [d for d in drafts if d.name in want]
     if a.skip_done:
         drafts = [d for d in drafts if not (out / "validation" / f"{d.name}.json").exists()]
-    # Group drafts that share a dependency install, so the first of each group warms Docker's cache.
+    # Interleave the dependency groups. The first draft of each group installs while the rest of that
+    # group waits for Docker's cache (BuildGate); sorted by group, every worker waited behind one
+    # install (measured: 75% of a 32-vCPU box idle). Round-robin keeps workers on different groups.
     fp = {d: json.loads((d / "draft.json").read_text())["deps_fingerprint"] for d in drafts}
-    drafts.sort(key=lambda d: (fp[d], d.name))
+    groups: dict[str, list[Path]] = {}
+    for d in drafts:
+        groups.setdefault(fp[d], []).append(d)
+    order = sorted(groups.values(), key=len, reverse=True)
+    width = max((len(g) for g in order), default=0)
+    drafts = [g[i] for i in range(width) for g in order if i < len(g)]
     if a.executor == "docker":
         ex = validate.DockerExecutor(a.docker)
     else:

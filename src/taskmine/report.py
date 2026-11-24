@@ -75,6 +75,18 @@ def build(out: Path) -> tuple[str, dict]:
         notes = sum(1 for t in tasks if t.get("notes"))
         L.append(f"- tasks whose issue text was left out by the leak check: {notes}")
         L.append("")
+    probed = [v for v in vals if "fail_to_pass_source_text" in v]
+    if probed:
+        dropped = sum(len(v["fail_to_pass_source_text"]) for v in probed)
+        kept = sum(len(v.get("fail_to_pass", [])) for v in probed)
+        L.append("## Source-text tests")
+        L.append("")
+        L.append(f"Fail-to-pass tests that pass only because the source TEXT changed (the text probe gives test "
+                 f"code the base text of changed files; these tests then fail): {dropped} of {dropped + kept} "
+                 f"fail-to-pass tests in {len(probed)} drafts. They are never required. Drafts left with no "
+                 f"behavioural fail-to-pass test: {vrej.get('source-text-only', 0)}. Accepted tasks that had some "
+                 f"dropped: {sum(1 for v in accepted if v.get('fail_to_pass_source_text'))}.")
+        L.append("")
     if accepted:
         secs = [sum(r["seconds"] for r in v["runs"]) for v in accepted]
         L.append(f"Validation time per accepted task (all runs, seconds): {_dist(secs)}")
