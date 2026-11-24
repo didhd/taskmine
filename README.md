@@ -3,11 +3,10 @@
 Turn a repository's merged pull requests into a Terminal-Bench / Harbor coding benchmark, where
 every task has been proven by execution.
 
+<!-- GitHub strips <video> (and everything inside it) from READMEs, so the preview is a GIF that links to the MP4. -->
 <p align="center">
-  <video src="docs/media/taskmine.mp4" poster="docs/media/taskmine-poster.png" controls width="820">
-    <a href="docs/media/taskmine.mp4"><img src="docs/media/taskmine-preview.gif" width="820"
-       alt="taskmine: the checks every task passes (from the 100-second video)"></a>
-  </video>
+  <a href="docs/media/taskmine.mp4"><img src="docs/media/taskmine-preview.gif" width="820"
+     alt="taskmine: the checks every task passes (from the 100-second video)"></a>
 </p>
 <p align="center"><a href="docs/media/taskmine.mp4"><b>Watch the 100-second narrated overview</b></a> (MP4, 1080p, 4 MB)</p>
 
