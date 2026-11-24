@@ -115,3 +115,36 @@ taskmine check    out/tasks
 harbor run -y -p out/tasks -a oracle -n 16 --no-delete
 harbor run -y -p out/tasks -a nop -n 16
 ```
+
+## Agents on the demo set (2026-11-24, second run)
+
+The demo used the everyday commands end to end:
+- On the laptop: `login`, `init`, `agents add`, and `mine --limit 120` (49 drafts).
+- On a Docker host: `verify`, which accepted 12 of the 49 and passed 12 of 12 static checks.
+- Then `bench --tasks 8 -n 8`, with both agents running in parallel through `taskmine gateway`.
+
+| agent | model (Bedrock) | solved | errors | cost | tokens in / out |
+|---|---|---:|---:|---:|---|
+| claude-code | us.anthropic.claude-sonnet-5-5 | 4 / 8 | 0 | $1.38 | 3.10 M / 35 K |
+| codex | us.openai.gpt-6.1-terra | 4 / 8 | 0 | $1.89 | 18.3 M / 68 K |
+
+- Both agents solved the same four tasks and failed the same four.
+- No credential entered a task container:
+  - The gateway signed Claude Code's Bedrock calls on the host.
+  - It served Codex through LiteLLM, which translated to Bedrock Converse.
+  - The containers could not reach the instance metadata endpoint (`iptables -I DOCKER-USER -d 169.254.169.254 -j DROP`).
+- A one-task smoke run before the demo also failed both agents on the same task. Each passed 10 of
+  11 required tests, and both failed the same test.
+
+## A Python repository
+
+A small synthetic repository: a package, pytest tests and two `--no-ff` merges. One merge adds a
+function and its tests; the other changes behaviour and adds a test beside an existing one. It went
+through the same `scan`, `build`, `validate`, `finalize` and `check`, with a `pytest` profile on
+`python:3.12-bookworm`:
+- Both drafts were accepted, with fail-to-pass 2 and 1 and pass-to-pass 0 and 1.
+- `check` passed 2 of 2.
+- Harbor 0.27.0 gave oracle 1.0 and nop 0.0 on both tasks.
+
+pytest writes the file path into its JUnit report only with `-o junit_family=xunit1`; the starter
+recipe sets it.

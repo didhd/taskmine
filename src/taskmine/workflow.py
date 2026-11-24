@@ -70,7 +70,7 @@ def _starter_recipe(repo: str, clone: Path) -> str:
     if py_tests:
         out.append('[[profiles]]\nname = "pytest"\nrun = ["**/test_*.py"]\nimage = "python:3.12-bookworm"\n'
                    'deps = ["requirements.txt"]\ninstall = "pip install -r /app/requirements.txt pytest"\n'
-                   'command = "python -m pytest -p no:cacheprovider --junitxml={junit} {files}"\n'
+                   'command = "python -m pytest -p no:cacheprovider -o junit_family=xunit1 --junitxml={junit} {files}"\n'
                    'display_command = "python -m pytest {files}"\n')
     if len(out) == 2:
         out.append("# No test runner found: add a [[profiles]] entry (see the README).\n")
@@ -254,11 +254,12 @@ def cmd_bench(a) -> int:
 def cmd_results(a) -> int:
     proj = project_mod.load()
     base = proj.out / "bench"
-    runs = sorted(p for p in base.iterdir() if p.is_dir()) if base.exists() else []
+    runs = [p for p in base.iterdir() if (p / "results.json").exists()] if base.exists() else []
     if not runs:
         print("no bench runs yet: taskmine bench")
         return 1
-    run = base / a.run if a.run else runs[-1]
+    # The latest run is the one that finished last, not the last name in sort order.
+    run = base / a.run if a.run else max(runs, key=lambda p: (p / "results.json").stat().st_mtime)
     s = bench_mod.summarize(run, proj.agents)
     print(c("1", f"run {run.name}"))
     print(bench_mod.table(s))
