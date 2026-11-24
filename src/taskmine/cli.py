@@ -31,6 +31,16 @@ from taskmine.scan import REFUSALS, Candidate
 from taskmine.vcs import Repo
 
 
+def _rel(p) -> str:
+    """A path as the person typed it: relative to the working directory when it is inside it."""
+    import os
+    try:
+        r = os.path.relpath(p)
+        return str(p) if r.startswith("..") else r
+    except ValueError:
+        return str(p)
+
+
 def _cands(out: Path) -> list[Candidate]:
     return [Candidate.from_json(json.loads(l)) for l in (out / "candidates.jsonl").read_text().splitlines() if l.strip()]
 
@@ -56,7 +66,7 @@ def cmd_scan(a) -> int:
     for c in cands:
         if c.refusal:
             counts[c.refusal] = counts.get(c.refusal, 0) + 1
-    print(f"{len(cands)} change units, {len(ok)} candidates -> {out / 'candidates.jsonl'}")
+    print(f"{len(cands)} change units, {len(ok)} candidates -> {_rel(out / 'candidates.jsonl')}")
     by_prof: dict[str, int] = {}
     for c in ok:
         by_prof[c.profile] = by_prof.get(c.profile, 0) + 1
@@ -81,7 +91,8 @@ def cmd_meta(a) -> int:
     for c in todo:
         if c.pr in got:
             (meta_dir / f"{c.id}.json").write_text(json.dumps(got[c.pr], indent=1, sort_keys=True) + "\n")
-    print(f"metadata for {len(got)} of {len(todo)} pull requests -> {meta_dir}")
+    issues = sum(len(v.get("issues") or []) for v in got.values())
+    print(f"metadata for {len(got)} of {len(todo)} pull requests ({issues} closing issues) -> {_rel(meta_dir)}")
     return 0
 
 
@@ -118,7 +129,7 @@ def cmd_build(a) -> int:
     with open(out / "build-refusals.jsonl", "a" if a.ids else "w") as f:
         for r in refused:
             f.write(json.dumps(r) + "\n")
-    print(f"{len(cands) - len(refused)} drafts in {out / 'drafts'}, {len(refused)} refused")
+    print(f"{len(cands) - len(refused)} drafts in {_rel(out / 'drafts')}, {len(refused)} refused")
     return 0
 
 
@@ -147,7 +158,7 @@ def cmd_validate(a) -> int:
         ex = validate.LocalExecutor(Path(a.scratch or (out / "scratch")))
     res = validate.validate_all(cfg, drafts, ex, a.jobs, a.base_runs, a.gold_runs, a.keep_images, out / "validation")
     acc = sum(1 for r in res if r["verdict"] == "accepted")
-    print(f"{acc} of {len(res)} drafts accepted; summaries in {out / 'validation'}")
+    print(f"{acc} of {len(res)} drafts accepted; summaries in {_rel(out / 'validation')}")
     return 0
 
 
@@ -175,7 +186,7 @@ def cmd_finalize(a) -> int:
     with open(out / "finalize.jsonl", "w") as f:
         for r in rows:
             f.write(json.dumps(r) + "\n")
-    print(f"{sum(1 for r in rows if r['status'] == 'task')} tasks in {tasks}")
+    print(f"{sum(1 for r in rows if r['status'] == 'task')} tasks in {_rel(tasks)}")
     return 0
 
 

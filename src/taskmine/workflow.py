@@ -77,6 +77,11 @@ def _starter_recipe(repo: str, clone: Path) -> str:
     return "# Starter recipe written by `taskmine init`. Check the profiles before `taskmine mine`.\n\n" + "\n".join(out)
 
 
+def tilde(p) -> str:
+    s, h = str(p), str(Path.home())
+    return "~" + s[len(h):] if s.startswith(h) else s
+
+
 def cmd_init(a) -> int:
     user = project_mod.gh_user()
     if user is None:
@@ -106,9 +111,9 @@ def cmd_init(a) -> int:
     merges = subprocess.run(["git", "-C", str(clone), "rev-list", "--merges", "--count", cfg.branch],
                             capture_output=True, text=True).stdout.strip()
     ok(f"project {c('1', a.repo)} (GitHub account {user})")
-    info(f"clone    {clone}  ({merges} merge commits on {cfg.branch})")
+    info(f"clone    {tilde(clone)}  ({merges} merge commits on {cfg.branch})")
     info(f"recipe   {recipe}  ({len(cfg.profiles)} test runner profiles: {', '.join(p.name for p in cfg.profiles)})")
-    info(f"dataset  {proj.out}")
+    info(f"dataset  {os.path.relpath(proj.out)}")
     return 0
 
 
@@ -152,6 +157,19 @@ def cmd_gateway(a) -> int:
     import time
     from taskmine import gateway
     proj = project_mod.load()
+    if a.detach:
+        args = [x for x in sys.argv[1:] if x != "--detach"]
+        (proj.root / "gateway.toml").unlink(missing_ok=True)
+        logf = open(proj.root / "gateway.log", "w")
+        subprocess.Popen([sys.executable, "-m", "taskmine", *args], stdout=logf, stderr=subprocess.STDOUT,
+                         start_new_session=True)
+        for _ in range(240):
+            if (proj.root / "gateway.toml").exists():
+                break
+            time.sleep(0.5)
+        time.sleep(1.0)
+        print((proj.root / "gateway.log").read_text().rstrip())
+        return 0 if (proj.root / "gateway.toml").exists() else 1
     codex = sorted({x["model"] for x in proj.agents if x["agent"] == "codex" and x["provider"] == "bedrock"})
     advertise = a.advertise or _host_ip()
     endpoint = a.endpoint or f"https://bedrock-runtime.{a.region}.amazonaws.com"
@@ -160,6 +178,7 @@ def cmd_gateway(a) -> int:
     if codex:
         info(f"OpenAI Responses for Codex at {g['openai_url']} ({', '.join(codex)}, via LiteLLM)")
     info(f"upstream {endpoint} ({a.region}); credentials stay on this host")
+    sys.stdout.flush()
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
     try:
         while True:
@@ -219,8 +238,12 @@ def cmd_bench(a) -> int:
     tasks = bench_mod.pick_tasks(proj.out / "tasks", a.tasks, a.seed, run_dir)
     n = len([p for p in tasks.iterdir() if (p / "task.toml").exists()])
     ok(f"bench {c('1', a.run)}: {len(chosen)} agents x {n} tasks, {a.concurrency} at a time")
-    for x in chosen:
-        bench_mod.run_agent(x, tasks, run_dir, a.concurrency, a.region, print, proj.root)
+    procs = {x["name"]: bench_mod.start_agent(x, tasks, run_dir, a.concurrency, a.region, print, proj.root)
+             for x in chosen}
+    codes = bench_mod.watch(procs, run_dir, print)
+    for name, code in codes.items():
+        if code:
+            info(f"{name}: harbor exited {code} (log: {run_dir / (name + '.harbor.log')})")
     s = bench_mod.summarize(run_dir, proj.agents)
     (run_dir / "results.json").write_text(json.dumps(s, indent=1) + "\n")
     print()
@@ -267,6 +290,7 @@ def register(sub) -> None:
     p.add_argument("--port", type=int, default=8790)
     p.add_argument("--region", default=os.environ.get("AWS_REGION", "us-west-2"))
     p.add_argument("--endpoint", help="Bedrock runtime URL (default: the region's; a VPC may need the -fips one)")
+    p.add_argument("--detach", action="store_true", help="run in the background (log: .taskmine/gateway.log)")
     p.set_defaults(fn=cmd_gateway)
 
     p = sub.add_parser("mine", help="merged pull requests -> draft tasks")

@@ -70,7 +70,7 @@ def bedrock_signer(listen: str, port: int, region: str, endpoint: str, log=print
             conn.request(self.command, self.path, body=body, headers=dict(req.headers.items()))
             resp = conn.getresponse()
             counter["n"] += 1
-            log(f"gateway: {self.command} {self.path.split('?')[0]} -> {resp.status} (#{counter['n']})")
+            log(f"gateway: {self.command} {self.path.split('?')[0]} -> {resp.status} (#{counter['n']})", flush=True)
             self.send_response(resp.status)
             for k, v in resp.getheaders():
                 if k.lower() not in HOP:

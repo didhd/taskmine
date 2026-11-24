@@ -34,15 +34,40 @@ def pick_tasks(tasks_dir: Path, n: int | None, seed: int, out: Path) -> Path:
     return sub
 
 
-def run_agent(a: dict, tasks: Path, jobs_dir: Path, concurrency: int, region: str, log, root=".taskmine") -> dict:
+def start_agent(a: dict, tasks: Path, jobs_dir: Path, concurrency: int, region: str, log, root=".taskmine"):
     args, env = agents_mod.harbor_args(a, region, root)
     cmd = ["harbor", "run", "-y", "-p", str(tasks), *args, "-n", str(concurrency),
            "-o", str(jobs_dir), "--job-name", a["name"]]
-    shown = " ".join(cmd)
-    log(f"$ {shown}")
+    log(f"  $ {' '.join(cmd)}")
+    out = open(jobs_dir / f"{a['name']}.harbor.log", "w")
+    return subprocess.Popen(cmd, env={**os.environ, **env}, stdout=out, stderr=subprocess.STDOUT)
+
+
+def watch(procs: dict, jobs_dir: Path, log, poll: float = 2.0) -> dict:
+    """Print each trial as Harbor finishes it, until every agent's job has exited."""
+    seen: set[Path] = set()
     t0 = time.time()
-    p = subprocess.run(cmd, env={**os.environ, **env})
-    return {"agent": a["name"], "exit": p.returncode, "seconds": round(time.time() - t0, 1)}
+    while True:
+        for name in procs:
+            job = jobs_dir / name
+            for r in sorted(job.rglob("result.json")) if job.exists() else []:
+                if "__" not in r.parent.name or r in seen:
+                    continue
+                try:
+                    d = json.loads(r.read_text())
+                except ValueError:
+                    continue  # still being written
+                seen.add(r)
+                rew = (d.get("verifier_result") or {}).get("rewards") or {}
+                exc = (d.get("exception_info") or {}).get("exception_type")
+                mark = "error " + str(exc) if exc else "solved" if rew.get("reward") == 1.0 else "failed"
+                ar = d.get("agent_result") or {}
+                cost = f"  ${ar['cost_usd']:.2f}" if isinstance(ar.get("cost_usd"), (int, float)) else ""
+                m, sec = divmod(int(time.time() - t0), 60)
+                log(f"  [{m:02d}:{sec:02d}] {name:<30} {d['task_name']:<16} {mark}{cost}")
+        if all(p.poll() is not None for p in procs.values()):
+            return {n: p.returncode for n, p in procs.items()}
+        time.sleep(poll)
 
 
 def collect(job: Path) -> dict:

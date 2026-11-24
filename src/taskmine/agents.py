@@ -52,7 +52,11 @@ def entry(agent: str, provider: str, model: str, name: str | None, env: dict[str
     kind = CATALOG[agent]
     if provider not in kind.providers:
         raise AgentError(f"{agent} runs with: {', '.join(kind.providers)} (not {provider!r})")
-    slug = re.sub(r"[^a-z0-9.]+", "-", model.split("/")[-1].lower()).strip("-")
+    m = model.split("/")[-1].lower()
+    m = re.sub(r"^(us|eu|apac|jp|au|global)\.", "", m)        # cross-region inference profile prefix
+    m = re.sub(r"^(anthropic|openai|meta|amazon|mistral|deepseek|qwen)\.", "", m)
+    m = re.sub(r"^claude-", "", m) if agent == "claude-code" else m
+    slug = re.sub(r"[^a-z0-9.]+", "-", m).strip("-")
     return {"name": name or f"{agent}-{slug}", "agent": agent, "provider": provider, "model": model,
             "env": dict(env)}
 
