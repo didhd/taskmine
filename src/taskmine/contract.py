@@ -181,3 +181,44 @@ def added_lines(patch: bytes, skip_paths=None) -> list[str]:
         if raw.startswith("+") and not (skip_paths and current and skip_paths(current)):
             lines.append(raw[1:])
     return lines
+
+
+_READ_CALL = re.compile(
+    r"\b(?:readFileSync|readFile|createReadStream|readTextFile|read_text|read_bytes|Bun\.file)\s*\(|\bopen\s*\("
+)
+
+
+def source_text_reads(test_sources: dict[str, str], gold_code_paths: set[str], workdir: str) -> dict[str, list[str]]:
+    """Test files that read, as text, a source file the change modifies: {test file: [paths]}.
+
+    A test that matches a regular expression against source text passes only for one spelling of
+    the fix, so its fail-to-pass result says nothing about behaviour. The detection is static and
+    explainable: the test file calls a file-reading function, and one of its string literals names
+    a file the gold change touches (as a path relative to the test, the profile's workdir or the
+    repository root, or as a bare file name when the path is assembled with join()).
+    """
+    by_name: dict[str, set[str]] = {}
+    for g in gold_code_paths:
+        by_name.setdefault(posixpath.basename(g), set()).add(g)
+    out: dict[str, list[str]] = {}
+    for path, src in test_sources.items():
+        code, strings = split_source(path, src)
+        if not _READ_CALL.search(code):
+            continue
+        hits: set[str] = set()
+        for value, is_title in strings:
+            v = value.strip()
+            if is_title or not v or len(v) > 300 or "\n" in v:
+                continue
+            v = v.split("?", 1)[0].removeprefix("file://")
+            options = {
+                posixpath.normpath(posixpath.join(posixpath.dirname(path), v)),
+                posixpath.normpath(posixpath.join(workdir, v)),
+                posixpath.normpath(v.lstrip("/")),
+            }
+            hits |= options & gold_code_paths
+            if "/" not in v and "." in v and len(v) >= 5:
+                hits |= by_name.get(v, set())
+        if hits:
+            out[path] = sorted(hits)
+    return out

@@ -116,6 +116,9 @@ def build_draft(repo: Repo, cfg: Config, cand: Candidate, meta: dict | None, out
     base_text = b"\n".join(snap.text[p] for p in sorted(snap.text))
     gold_added = "\n".join(contract.added_lines(gold_patch))
     con = contract.extract(sources, base_text, set(base_tree), set(after_tree), gold_added)
+    gold_code = {p for p in cand.gold_files if not cfg.docs.match(p)}
+    coupling = contract.source_text_reads(
+        {p: s for p, s in sources.items() if p in cand.run_files}, gold_code, prof.workdir)
 
     d = out_root / cand.id
     if d.exists():
@@ -146,6 +149,7 @@ def build_draft(repo: Repo, cfg: Config, cand: Candidate, meta: dict | None, out
         "candidate": cand.to_json(),
         "meta": meta or {},
         "contract": con.to_json(),
+        "source_text_reads": coupling,
         "snapshot": {"sha256": snap.sha256, "bytes": len(snap.data), "files": len(snap.members), "left_out": snap.left_out},
         "deps_fingerprint": fingerprint,
         "gold": {"files": len(cand.gold_files), "lines": cand.gold_lines, "patch_sha256": hashlib.sha256(gold_patch).hexdigest()},

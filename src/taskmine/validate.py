@@ -239,6 +239,13 @@ def validate_one(cfg: Config, draft: Path, ex, base_runs: int, gold_runs: int, k
     a = analyse(bases, golds)
     if not a["fail_to_pass"]:
         return done("rejected", "fail-to-pass-was-flaky", **a)
+    coupled = info.get("source_text_reads") or {}
+    if coupled and not cfg.allow_source_text:
+        text_tests = [t for t in a["fail_to_pass"] if t.split("::", 1)[0] in coupled]
+        a["fail_to_pass_source_text"] = text_tests
+        a["fail_to_pass"] = [t for t in a["fail_to_pass"] if t not in set(text_tests)]
+        if not a["fail_to_pass"]:
+            return done("rejected", "source-text-only", **a)
 
     exp.write_text(json.dumps({"fail_to_pass": a["fail_to_pass"], "pass_to_pass": a["pass_to_pass"]}, indent=1) + "\n")
     nop = run("nop", False)

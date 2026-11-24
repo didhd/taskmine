@@ -82,6 +82,7 @@ class Config:
     agent_timeout_sec: float = 3600.0
     storage_mb: int = 20480
     include_issue: bool = True
+    allow_source_text: bool = False
     issue_max_chars: int = 4000
 
     def profile(self, name: str) -> Profile:
@@ -95,7 +96,7 @@ _SECTIONS = {
     "repo": {"name", "github"},
     "units": {"kind", "branch", "since", "pr_patterns"},
     "snapshot": {"max_file_bytes", "exclude", "binary_ext"},
-    "tests": {"paths", "docs"},
+    "tests": {"paths", "docs", "allow_source_text"},
     "limits": {"max_gold_files", "max_gold_lines", "max_run_files", "max_changed_file_bytes"},
     "task": {"agent_timeout_sec", "storage_mb", "include_issue", "issue_max_chars"},
     "profiles": None,
@@ -193,5 +194,6 @@ def load(path: str | Path) -> Config:
         agent_timeout_sec=float(task.get("agent_timeout_sec", 3600)),
         storage_mb=int(task.get("storage_mb", 20480)),
         include_issue=bool(task.get("include_issue", True)),
+        allow_source_text=bool(tests.get("allow_source_text", False)),
         issue_max_chars=int(task.get("issue_max_chars", 4000)),
     )

@@ -56,6 +56,18 @@ class Contract(unittest.TestCase):
         self.assertEqual(c.exact_text, ["brand new value"])
 
 
+class SourceText(unittest.TestCase):
+    def test_a_test_that_reads_changed_source_is_coupled(self):
+        src = {"web/test/a.test.mjs": "import { readFileSync } from 'node:fs';\n"
+               "const s = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8');\n"
+               "test('wired', () => assert.match(s, /railToggle/));\n",
+               "web/test/b.test.mjs": "import { readFileSync } from 'node:fs';\n"
+               "const s = readFileSync(join(here, '..', 'src', 'App.tsx'), 'utf8');\n",
+               "web/test/c.test.mjs": "import { f } from '../src/App.tsx';\ntest('works', () => f());\n"}
+        got = contract.source_text_reads(src, {"web/src/App.tsx"}, "web")
+        self.assertEqual(got, {"web/test/a.test.mjs": ["web/src/App.tsx"], "web/test/b.test.mjs": ["web/src/App.tsx"]})
+
+
 class Instruction(unittest.TestCase):
     def test_clean_title(self):
         self.assertEqual(instruction.clean_title("[next train] fix(x): a thing (#5895, chore 2 of #6040)"), "fix(x): a thing")

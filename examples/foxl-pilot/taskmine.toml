@@ -37,11 +37,12 @@ agent_timeout_sec = 3600
 [[profiles]]
 name = "foxl-node-test"
 run = ["foxl/tests/*.test.mjs"]
-image = "node:24-bookworm"
+image = "node:24-bookworm@sha256:6b33b0be1647d1a577f9cebb6c8fc2587cc02c98c9956af8d0289df1791a3d10"
 workdir = "foxl"
 deps = ["foxl/package.json", "foxl/package-lock.json"]
 deps_normalize = "npm"
-install = "cd /app/foxl && npm ci --ignore-scripts --no-audit --no-fund"
+# The same install pr-validate runs for foxl/.
+install = "cd /app/foxl && npm ci --include=dev --legacy-peer-deps --no-audit --no-fund"
 command = "node_modules/.bin/tsx --test --test-concurrency=1 --test-reporter=junit --test-reporter-destination={junit} --test-reporter=spec --test-reporter-destination=stdout {files}"
 display_command = "npx tsx --test {files}"
 timeout_sec = 900
@@ -54,13 +55,13 @@ memory_mb = 6144
 [[profiles]]
 name = "forge-server-node-test"
 run = ["forge/server/test/*.test.mjs"]
-image = "node:24-bookworm"
+image = "node:24-bookworm@sha256:6b33b0be1647d1a577f9cebb6c8fc2587cc02c98c9956af8d0289df1791a3d10"
 workdir = "forge/server"
-deps = ["package.json", "package-lock.json", "relay/package.json", "forge/server/package.json",
+deps = [".npmrc", "package.json", "package-lock.json", "relay/package.json", "forge/server/package.json",
         "site/landing/package.json", "docs/package.json", "packages/*/package.json"]
 deps_normalize = "npm"
-install = "cd /app && npm ci --ignore-scripts --no-audit --no-fund --workspace forge/server"
-command = "npx --no tsx --test --test-concurrency=1 --test-reporter=junit --test-reporter-destination={junit} --test-reporter=spec --test-reporter-destination=stdout {files}"
+install = "cd /app && npm ci --include=dev --legacy-peer-deps --no-audit --no-fund --workspace forge/server"
+command = "PATH=/app/forge/server/node_modules/.bin:/app/node_modules/.bin:$PATH tsx --test --test-concurrency=1 --test-reporter=junit --test-reporter-destination={junit} --test-reporter=spec --test-reporter-destination=stdout {files}"
 display_command = "npx tsx --test {files}"
 timeout_sec = 900
 cpus = 2
@@ -70,12 +71,12 @@ memory_mb = 6144
 [[profiles]]
 name = "code-pages-node-test"
 run = ["packages/code/test/*.test.mjs"]
-image = "node:24-bookworm"
+image = "node:24-bookworm@sha256:6b33b0be1647d1a577f9cebb6c8fc2587cc02c98c9956af8d0289df1791a3d10"
 workdir = "packages/code"
-deps = ["package.json", "package-lock.json", "relay/package.json", "forge/server/package.json",
+deps = [".npmrc", "package.json", "package-lock.json", "relay/package.json", "forge/server/package.json",
         "site/landing/package.json", "docs/package.json", "packages/*/package.json"]
 deps_normalize = "npm"
-install = "cd /app && npm ci --ignore-scripts --no-audit --no-fund --workspace packages/code"
+install = "cd /app && npm ci --include=dev --legacy-peer-deps --no-audit --no-fund --workspace packages/code"
 command = "node --test --test-concurrency=1 --test-reporter=junit --test-reporter-destination={junit} --test-reporter=spec --test-reporter-destination=stdout {files}"
 display_command = "node --test {files}"
 timeout_sec = 900
