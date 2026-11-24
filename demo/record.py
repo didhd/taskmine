@@ -4,7 +4,8 @@
 
 The script file holds one shell command per line (`#` lines are shown as comments). Each command is
 typed at a human pace, then RUN for real in a pseudo-terminal; its output is recorded with the times
-it actually arrived. Only waiting is shortened: a gap longer than --idle seconds is cut to --idle.
+it actually arrived. Only waiting can be shortened: with --idle N a gap longer than N seconds is cut to N; --idle 0
+keeps every interval as it happened.
 Nothing in the output is edited or invented.
 """
 
@@ -71,7 +72,7 @@ def main() -> int:
                     data = b""
                 if data:
                     now = time.time()
-                    emit(data.decode("utf-8", "replace"), min(now - last, a.idle))
+                    emit(data.decode("utf-8", "replace"), (now - last) if a.idle <= 0 else min(now - last, a.idle))
                     last = now
                     continue
             if p.poll() is not None:
