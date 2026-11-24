@@ -3,6 +3,18 @@
 Turn a repository's merged pull requests into a Terminal-Bench / Harbor coding benchmark, where
 every task has been proven by execution.
 
+<p align="center">
+  <video src="docs/media/taskmine.mp4" poster="docs/media/taskmine-poster.png" controls width="820">
+    <a href="docs/media/taskmine.mp4"><img src="docs/media/taskmine-preview.gif" width="820"
+       alt="taskmine: the checks every task passes (from the 100-second video)"></a>
+  </video>
+</p>
+<p align="center"><a href="docs/media/taskmine.mp4"><b>Watch the 100-second narrated overview</b></a> (MP4, 1080p, 4 MB)</p>
+
+Dogfooded on 552 merged pull requests of a private TypeScript monorepo: **173 tasks**, each passing
+Harbor's own `oracle` (173/173 at 1.0) and failing its `nop` agent (173/173 at 0.0).
+See [docs/DOGFOOD.md](docs/DOGFOOD.md).
+
 A task is the repository at the commit just before a merged change, an instruction, and a hidden
 test suite. It is kept only when execution shows all of the following, in the image the task
 ships with:
@@ -119,7 +131,20 @@ installed packages), which no verifier sharing its container can rule out.
 
 ## Status
 
-Verified end to end on `node --test` and `tsx --test` (see [docs/DOGFOOD.md](docs/DOGFOOD.md)).
-Other runners go through the same JUnit path but have not been run yet.
+Verified end to end on `node --test` and `tsx --test`: 552 pull requests in, 173 tasks out, Harbor
+0.27.0 oracle 173/173 and nop 0/173, Harbor 0.22.0 on a sample of 12, and a byte-identical rebuild
+of 10 sampled tasks on a second machine ([docs/DOGFOOD.md](docs/DOGFOOD.md)). Other runners go
+through the same JUnit path but have not been run yet. The text probe is Node-only; other runtimes
+fall back to a static, file-level check.
 
-License: MIT-0.
+## The video
+
+Made with the video-generator plugin's pieces ([docs/media/src/make_video.py](docs/media/src/make_video.py)):
+slides in its AWS 2026 dark theme rendered at 2x, narration by Amazon Polly (generative voice
+Matthew), cross-fades with ffmpeg. Every number on screen is read from the dataset by
+[gen_numbers.py](docs/media/src/gen_numbers.py); no frame is generated imagery. Amazon Nova 2 Lite's
+QA scored it 10 visual quality, 10 audio-visual sync, 9 pacing, 10 text readability, 9 cohesion
+([qa.json](docs/media/src/qa.json)). The logo is the AWS 2026 template's, as the plugin ships it:
+check brand guidance before publishing the video outside Amazon.
+
+License: MIT-0 ([LICENSE](LICENSE)).

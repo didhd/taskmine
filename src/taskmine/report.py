@@ -54,8 +54,19 @@ def build(out: Path) -> tuple[str, dict]:
     L.append("| step | units | left out here, by reason |")
     L.append("|---|---:|---|")
     fmt = lambda c: ", ".join(f"{k} {v}" for k, v in c.most_common()) or "-"
+    n_drafts = n_cand - sum(build_refusals.values())
+    unval = Counter()
+    if n_drafts > len(vals):
+        upath = out / "unvalidated.json"
+        listed = json.loads(upath.read_text()).get("unvalidated", []) if upath.exists() else []
+        unval["stopped-at-the-time-limit"] = len(listed)
+        if n_drafts - len(vals) - len(listed):
+            unval["not-run"] = n_drafts - len(vals) - len(listed)
+    data["drafts"] = n_drafts
+    data["not_validated"] = dict(unval)
     L.append(f"| change units in the history | {len(cands)} | {fmt(scan_refusals)} |")
     L.append(f"| candidates (scan) | {n_cand} | {fmt(build_refusals)} |")
+    L.append(f"| drafts built | {n_drafts} | {fmt(unval)} |")
     L.append(f"| validated in Docker | {len(vals)} | {fmt(vrej)} |")
     L.append(f"| accepted by execution | {len(accepted)} | {fmt(fin_ref)} |")
     L.append(f"| finished tasks | {len(tasks)} | |")
