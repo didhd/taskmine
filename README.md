@@ -31,7 +31,8 @@ request **review** history into approve/deny datapoints for a PR-review agent. I
 |---|---|---|
 | What the agent does | reads a diff, says approve or block | edits the repository until hidden tests pass |
 | Which PRs qualify | ones that went through review iterations (a rejected push, comments, an approved push) | any merged PR that adds or changes a runnable test and changes code |
-| Who decides the label | a coding agent fills the "defect vs nit" judgment slots; thoroughness is scored by an LLM judge | execution: fail before, pass after, repeated; no model anywhere |
+| Who decides the label | a coding agent fills the "defect vs nit" judgment slots of each candidate | execution: fail before, pass after, repeated; no model anywhere |
+| How a run is graded | an LLM judge (pinned Claude Haiku 4.5 on Bedrock) matches the agent's findings to the mined ones | the repository's own tests, from the runner's JUnit report |
 | Dependencies | none needed (nothing runs) | installed in the image from the repository's own lockfiles, cached across tasks |
 | Answer absence | scans the datapoint for its own answer | the snapshot is re-read and every file is proven to be the base commit's; the instruction is checked against the gold patch |
 | Reproducibility | | a draft rebuilt from the same inputs has the same sha256, so a dataset validated on one machine is rebuilt byte-for-byte on another |
