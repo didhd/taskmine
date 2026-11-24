@@ -132,7 +132,7 @@ installed packages), which no verifier sharing its container can rule out.
 ## Status
 
 Verified end to end on `node --test` and `tsx --test`: 552 pull requests in, 173 tasks out, Harbor
-0.27.0 oracle 173/173 and nop 0/173, Harbor 0.22.0 on a sample of 12, and a byte-identical rebuild
+0.27.0 oracle 1.0 and nop 0.0 on all 173, Harbor 0.22.0 on a sample of 12, and a byte-identical rebuild
 of 10 sampled tasks on a second machine ([docs/DOGFOOD.md](docs/DOGFOOD.md)). Other runners go
 through the same JUnit path but have not been run yet. The text probe is Node-only; other runtimes
 fall back to a static, file-level check.
@@ -145,6 +145,33 @@ Matthew), cross-fades with ffmpeg. Every number on screen is read from the datas
 [gen_numbers.py](docs/media/src/gen_numbers.py); no frame is generated imagery. Amazon Nova 2 Lite's
 QA scored it 10 visual quality, 10 audio-visual sync, 9 pacing, 10 text readability, 9 cohesion
 ([qa.json](docs/media/src/qa.json)). The logo is the AWS 2026 template's, as the plugin ships it:
-check brand guidance before publishing the video outside Amazon.
+check brand guidance before publishing the video outside Amazon. To regenerate it, see
+[docs/media/src/README.md](docs/media/src/README.md).
+
+## Repository layout
+
+| Path | What it is |
+|---|---|
+| `src/taskmine/cli.py` | the seven verbs and their help |
+| `src/taskmine/scan.py` | change units, the test-side / gold-side split, refusal codes |
+| `src/taskmine/snapshot.py`, `deps.py` | the sealed base snapshot and the shared dependency layer |
+| `src/taskmine/contract.py`, `instruction.py`, `leak.py` | the interface contract, the instruction, the answer-absence check |
+| `src/taskmine/emit.py` | drafts, digests, finished Harbor tasks |
+| `src/taskmine/validate.py` | the Docker and local executors, fail-to-pass analysis, the text probe |
+| `src/taskmine/templates/` | what goes into every task: Dockerfile, `test.sh`, `grader.py`, `solve.sh`; and `textprobe.mjs`, used only while validating |
+| `src/taskmine/check.py`, `report.py` | static checks on finished tasks, the funnel report |
+| `examples/foxl-pilot/` | the recipe the dogfood run used (three profiles in one monorepo) |
+| `docs/DOGFOOD.md` | that run: numbers, findings, the bugs it found |
+| `tests/` | unit tests and an end-to-end run over a real git repository |
+
+## Development
+
+```sh
+PYTHONPATH=src python3 -m unittest discover -s tests   # 19 tests; the end-to-end ones need git and node
+PYTHONPATH=src python3 -m taskmine --help
+```
+
+The end-to-end tests create a git repository with real merges and run `scan`, `build`,
+`validate` (local executor), `finalize` and `check` over it; nothing is mocked.
 
 License: MIT-0 ([LICENSE](LICENSE)).
