@@ -1,0 +1,21 @@
+[project]
+name = "taskmine"
+version = "0.1.0"
+description = "Mine a repository's merged pull requests into execution-verified Terminal-Bench (Harbor) coding tasks."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT-0" }
+dependencies = []
+
+[project.scripts]
+taskmine = "taskmine.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+taskmine = ["templates/*"]
