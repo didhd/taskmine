@@ -80,6 +80,7 @@ def check_task(task: Path) -> list[str]:
     meta = doc.get("metadata", {}).get("taskmine", {})
     con = meta.get("contract", {})
     allowed = list(con.get("names", [])) + list(con.get("modules", [])) + list(con.get("text", []))
+    allowed += leak.stated_paths(spec["run_files"], spec.get("workdir") or ".")
     text = (task / "instruction.md").read_text()
     for f in leak.find(text, code_lines, allowed):
         problems.append(f"instruction leak: {f}")

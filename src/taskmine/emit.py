@@ -186,7 +186,7 @@ def finalize(cfg: Config, draft: Path, validation: dict, tasks_root: Path) -> di
 
     gold_patch = (draft / "solution" / "gold.patch").read_bytes()
     code_lines = contract.added_lines(gold_patch, skip_paths=cfg.docs.match)
-    allowed = con.new_names + con.new_modules + con.exact_text
+    allowed = con.new_names + con.new_modules + con.exact_text + leak.stated_paths(cand.run_files, prof.workdir)
     notes = []
     issue = _issue_for(cfg, meta)
     text, sources = instruction.render(

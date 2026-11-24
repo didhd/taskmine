@@ -21,11 +21,26 @@ SHINGLE = 12
 MIN_LINE = 30
 
 
+_COMMENT = re.compile(r"^\s*(?://|#|/\*|\*|<!--)")
+
+
 def _norm(s: str) -> str:
     return " ".join(s.split())
 
 
+def stated_paths(run_files: list[str], workdir: str) -> list[str]:
+    """The test files the instruction names on purpose (in the run command and the test list)."""
+    out = []
+    for f in run_files:
+        out.append(f)
+        if workdir not in (".", "") and f.startswith(workdir.rstrip("/") + "/"):
+            out.append(f[len(workdir.rstrip("/")) + 1 :])
+    return out
+
+
 def find(text: str, gold_code_lines: list[str], allowed: list[str]) -> list[str]:
+    """Comment-only gold lines are skipped: a comment that repeats a test's name implements nothing."""
+    gold_code_lines = [line for line in gold_code_lines if not _COMMENT.match(line)]
     found = []
     if re.search(r"^(?:diff --git |@@ -\d+(?:,\d+)? \+\d+)", text, re.M):
         found.append("diff syntax in the instruction")

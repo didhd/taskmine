@@ -34,6 +34,14 @@ class Leak(unittest.TestCase):
         text = "Add `multiplyExact`. It must throw `multiplyExact needs integers`.\n"
         self.assertEqual(leak.find(text, self.gold, ["multiplyExact", "multiplyExact needs integers"]), [])
 
+    def test_the_named_test_file_and_comments_are_not_leaks(self):
+        gold = ['    "test:x": "tsx --test tests/card-picture-child-decode.regression.test.mjs",',
+                "  // a newer read that fails after an older read saw a pause serves and keeps that pause"]
+        text = ("Tests run with:\n\n    npx tsx --test tests/card-picture-child-decode.regression.test.mjs\n\n"
+                "- a newer read that fails after an older read saw a pause serves and keeps that pause\n")
+        allowed = leak.stated_paths(["foxl/tests/card-picture-child-decode.regression.test.mjs"], "foxl")
+        self.assertEqual(leak.find(text, gold, allowed), [])
+
     def test_diff_syntax_is_a_leak(self):
         self.assertTrue(leak.find("diff --git a/x b/x\n", [], []))
 
