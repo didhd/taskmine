@@ -6,7 +6,7 @@ Taskmine turns your team's merged pull requests into [Harbor](https://github.com
 
 https://github.com/user-attachments/assets/ee577b45-6332-4d3c-a2bf-7e55314ccbfc
 
-**5:04 from repo to results.** A real run on a small sample repo: `verify` took 3:20 with image builds, and `bench` took 1:09 with four agents. The 2:16 video skips a long wait. [Full recording](https://github.com/didhd/taskmine/issues/1#issuecomment-7152029102) · [Terminal cast](docs/demo.cast).
+**2:16 demo.** The full run took 5:04 on AgentCore V1. The video skips a wait during verification. [Full recording](https://github.com/didhd/taskmine/issues/1#issuecomment-7152029102) · [Terminal cast](docs/demo.cast).
 
 ## Try it
 
