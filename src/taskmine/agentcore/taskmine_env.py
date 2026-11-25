@@ -12,8 +12,10 @@ TASKMINE_AC_PLATFORM is the AgentCore platform version that new runtimes get:
   before it answers /ping, so the firewall is part of the snapshot. A V2 runtime is named
   `<V1 name>_v2`, so both can serve the same image side by side.
 
-TASKMINE_AC_WARMUP=1 (V2 only) adds a build hook that reads the image files sessions will need
-while the snapshot is built (taskmine_warmup.py). Those images get their own tag, ending in `w`.
+TASKMINE_AC_WARMUP (V2 only) adds a build hook (taskmine_warmup.py):
+- `disk` (or `1`) reads the files sessions will need while the snapshot is built;
+- `ram` also copies the repository into a tmpfs, which is part of the memory snapshot.
+Those images get their own tag: `w`, then a short hash of the hook, its mode and the Dockerfile tail.
 """
 
 from __future__ import annotations
@@ -31,10 +33,15 @@ from harbor_env.agentcore_env import AgentCoreEnvironment
 PLATFORM = os.environ.get("TASKMINE_AC_PLATFORM", "V1")
 if PLATFORM not in ("V1", "V2"):
     raise ValueError(f"TASKMINE_AC_PLATFORM must be V1 or V2, not {PLATFORM!r}")
-WARMUP = PLATFORM == "V2" and os.environ.get("TASKMINE_AC_WARMUP", "0") == "1"
+_MODES = {"": None, "0": None, "1": "disk", "disk": "disk", "ram": "ram"}
+_mode = os.environ.get("TASKMINE_AC_WARMUP", "")
+if _mode not in _MODES:
+    raise ValueError(f"TASKMINE_AC_WARMUP must be disk or ram, not {_mode!r}")
+WARMUP = _MODES[_mode] if PLATFORM == "V2" else None
 HOOKS = {"build": {"warmup": {"action": {"httpPost": {"path": "/warmup", "port": 9090}}}}}
 WARMUP_FILE = Path(__file__).resolve().parent / "taskmine_warmup.py"
 WARMUP_TAIL = ('\n# ===== taskmine: V2 build hook (taskmine_warmup.py), then PR #120\'s shim =====\n'
+               f'ENV TASKMINE_WARMUP_MODE={WARMUP or "disk"}\n'
                'COPY taskmine_warmup.py /opt/taskmine/warmup.py\nCMD ["python3", "/opt/taskmine/warmup.py"]\n')
 
 
