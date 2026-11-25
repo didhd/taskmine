@@ -14,6 +14,7 @@ import json
 import os
 import shutil
 import socket
+import socketserver
 import ssl
 import subprocess
 import sys
@@ -30,6 +31,15 @@ from taskmine import gateway
 
 SRC = Path(__file__).resolve().parent.parent / "src"
 FAKE_KEY = "AKIDTASKMINETEST0000"
+
+
+class LocalServer(ThreadingHTTPServer):
+    """The upstream, without HTTPServer's reverse DNS lookup of its own address at bind time
+    (socket.getfqdn, which can stall for tens of seconds on a CI macOS host)."""
+
+    def server_bind(self):
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = "127.0.0.1", self.server_address[1]
 
 
 def free_port() -> int:
@@ -82,26 +92,35 @@ class Signer(SharedTempDir):
         env = {"PATH": os.environ.get("PATH", ""), "HOME": str(home), "PYTHONPATH": str(SRC),
                "AWS_ACCESS_KEY_ID": FAKE_KEY, "AWS_SECRET_ACCESS_KEY": "fake-secret", "AWS_SESSION_TOKEN": "fake-token",
                "AWS_EC2_METADATA_DISABLED": "true", "SSL_CERT_FILE": str(cls.cert)}
-        driver = ("import sys, time\nfrom pathlib import Path\nfrom taskmine import gateway\n"
+        driver = ("import sys, time\nt0 = time.time()\nfrom pathlib import Path\nfrom taskmine import gateway\n"
+                  "print(f'imported in {time.time() - t0:.1f} s', flush=True)\n"
                   "gateway.start(Path(sys.argv[1]), '127.0.0.1', '127.0.0.1', int(sys.argv[2]), 'us-west-2', sys.argv[3], [])\n"
-                  "time.sleep(120)\n")
+                  "print(f'started in {time.time() - t0:.1f} s', flush=True)\n"
+                  "time.sleep(300)\n")
         cls.proc = subprocess.Popen([sys.executable, "-c", driver, str(cls.root), str(cls.port),
                                      f"https://127.0.0.1:{cls.upstream.server_port}"],
                                     env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         cls.addClassCleanup(cls.stop)
-        for _ in range(200):
+        # Generous: binding the gateway's HTTP server does a reverse DNS lookup of its address, which
+        # can take tens of seconds on some hosts.
+        deadline = time.time() + 90
+        while time.time() < deadline:
             if (cls.root / "gateway.toml").exists() or cls.proc.poll() is not None:
                 break
             time.sleep(0.05)
         if not (cls.root / "gateway.toml").exists():
-            raise AssertionError("the gateway did not start: " + cls.proc.stdout.read().decode(errors="replace"))
+            cls.proc.kill()
+            out = cls.proc.communicate()[0].decode(errors="replace")
+            raise AssertionError(f"the gateway did not start within 90 s (exit {cls.proc.returncode}): {out}")
         time.sleep(0.1)  # gateway.toml is written right after the server thread starts
 
     @classmethod
     def stop(cls):
-        cls.proc.kill()
+        if cls.proc.poll() is None:
+            cls.proc.kill()
         cls.proc.wait()
-        cls.proc.stdout.close()
+        if not cls.proc.stdout.closed:
+            cls.proc.stdout.close()
 
     def setUp(self):
         self.seen.clear()
@@ -128,7 +147,7 @@ class Signer(SharedTempDir):
                 self.end_headers()
                 self.wfile.write(payload)
 
-        srv = ThreadingHTTPServer(("127.0.0.1", 0), Upstream)
+        srv = LocalServer(("127.0.0.1", 0), Upstream)
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         ctx.load_cert_chain(cls.cert, cls.key)
         srv.socket = ctx.wrap_socket(srv.socket, server_side=True)
