@@ -194,7 +194,7 @@ def finalize(cfg: Config, draft: Path, validation: dict, tasks_root: Path) -> di
     if code_text:
         con.exact_text = [s for s in con.exact_text if s not in set(code_text)]
         notes.append(f"exact text left out because it is a line of the gold code: {len(code_text)}")
-    allowed = con.new_names + con.new_modules + con.exact_text + leak.stated_paths(cand.run_files, prof.workdir)
+    allowed = con.new_names + con.new_modules + con.exact_text + con.calls + leak.stated_paths(cand.run_files, prof.workdir)
     issue = _issue_for(cfg, meta)
     text, sources = instruction.render(
         repo_name=cfg.repo_name, title=title, issue=issue, issue_limit=cfg.issue_max_chars,
@@ -244,7 +244,7 @@ def finalize(cfg: Config, draft: Path, validation: dict, tasks_root: Path) -> di
         "contract_names": len(con.new_names),
         "contract_modules": len(con.new_modules),
         "contract_text": len(con.exact_text),
-        "contract": {"names": con.new_names, "modules": con.new_modules, "text": con.exact_text},
+        "contract": {"names": con.new_names, "modules": con.new_modules, "text": con.exact_text, "calls": con.calls},
         "snapshot_sha256": info["snapshot"]["sha256"],
         "deps_fingerprint": info["deps_fingerprint"],
         "draft_digest": digest,
