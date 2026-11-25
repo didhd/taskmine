@@ -239,25 +239,42 @@ def validate_one(cfg: Config, draft: Path, ex, base_runs: int, gold_runs: int, k
     n = {"i": 0}
 
     def run(kind: str, with_solution: bool, probe: bool = False) -> dict:
-        n["i"] += 1
-        name = f"tm-{cand['id']}-{digest[:8]}-{n['i']}"
-        logs = vdir / f"{n['i']:02d}-{kind}"
-        r = ex.run(tag, draft, with_solution, logs, prof, name, cfg.tests.patterns if probe else None)
-        result["runs"].append(_summ(kind, r))
-        if probe:
-            read = logs / "textprobe.log"
-            r["substituted"] = sorted(set(read.read_text().split())) if read.exists() else []
-        return r
+        return runs([(kind, with_solution, probe)])[0]
 
-    bases = [run("base", False)]
-    golds = [run("gold", True)]
+    def runs(specs: list[tuple[str, bool, bool]]) -> list[dict]:
+        """Run in this order. An executor whose runs are separate machines (AgentCore sessions) runs them at once."""
+        slots = []
+        for kind, with_solution, probe in specs:
+            n["i"] += 1
+            slots.append((kind, with_solution, probe, f"tm-{cand['id']}-{digest[:8]}-{n['i']}", vdir / f"{n['i']:02d}-{kind}"))
+
+        def one(s):
+            kind, with_solution, probe, name, logs = s
+            r = ex.run(tag, draft, with_solution, logs, prof, name, cfg.tests.patterns if probe else None)
+            if probe:
+                read = logs / "textprobe.log"
+                r["substituted"] = sorted(set(read.read_text().split())) if read.exists() else []
+            return r
+
+        if getattr(ex, "parallel_runs", False) and len(slots) > 1:
+            with ThreadPoolExecutor(max_workers=len(slots)) as pool:
+                out = list(pool.map(one, slots))
+        else:
+            out = [one(s) for s in slots]
+        for s, r in zip(slots, out):
+            result["runs"].append(_summ(s[0], r))
+        return out
+
+    first = runs([("base", False, False), ("gold", True, False)])
+    bases, golds = [first[0]], [first[1]]
     if golds[0]["solve_failed"]:
         return done("rejected", "gold-patch-does-not-apply")
     a = analyse(bases, golds)
     if not a["fail_to_pass"]:
         return done("rejected", _why_no_f2p(a), **a)
-    bases += [run("base", False) for _ in range(base_runs - 1)]
-    golds += [run("gold", True) for _ in range(gold_runs - 1)]
+    more = runs([("base", False, False)] * (base_runs - 1) + [("gold", True, False)] * (gold_runs - 1))
+    bases += more[:base_runs - 1]
+    golds += more[base_runs - 1:]
     a = analyse(bases, golds)
     if not a["fail_to_pass"]:
         return done("rejected", "fail-to-pass-was-flaky", **a)
@@ -276,10 +293,13 @@ def validate_one(cfg: Config, draft: Path, ex, base_runs: int, gold_runs: int, k
             return done("rejected", "source-text-only", **a)
 
     exp.write_text(json.dumps({"fail_to_pass": a["fail_to_pass"], "pass_to_pass": a["pass_to_pass"]}, indent=1) + "\n")
-    nop = run("nop", False)
+    if getattr(ex, "parallel_runs", False):
+        nop, oracle = runs([("nop", False, False), ("oracle", True, False)])
+    else:
+        nop, oracle = run("nop", False), None
     if nop.get("reward") != 0:
         return done("rejected", "nop-not-zero", **a)
-    oracle = run("oracle", True)
+    oracle = oracle or run("oracle", True)
     if oracle.get("reward") != 1:
         return done("rejected", "oracle-not-one", **a)
     return done("accepted", "", **a)

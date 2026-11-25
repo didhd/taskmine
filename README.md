@@ -28,19 +28,28 @@ taskmine login                                   # GitHub, through the GitHub CL
 taskmine init acme/shop                          # clone it, write a starter recipe (taskmine.toml)
 taskmine agents add claude-code --provider bedrock --model us.anthropic.claude-sonnet-5-5
 taskmine agents add codex       --provider bedrock --model us.openai.gpt-6.1-terra
+taskmine agents add opencode    --provider bedrock --model us.openai.gpt-6.1-terra
+taskmine agents add strands     --provider bedrock --model us.openai.gpt-6.1-terra
 taskmine mine                                    # merged PRs and the issues they close -> draft tasks
-taskmine gateway --detach                        # serves the models to agent containers (see below)
-taskmine verify                                  # run every draft in Docker; keep what execution proves
+taskmine agentcore setup                         # once: the AWS side (IAM roles, ECR, CodeBuild)
+taskmine verify                                  # run every draft on AgentCore; keep what execution proves
 taskmine bench --tasks 20                        # every agent over the same tasks, with Harbor
 taskmine results                                 # who solved what, and what it cost
+taskmine agentcore teardown                      # delete every AWS resource that setup made
 ```
 
-`mine` runs anywhere git and gh work. `verify` and `bench` need a Docker host. The tasks are plain
-Harbor task directories, so `harbor run -p .taskmine/out/tasks -a <agent> -m <model>` works too.
+- `mine` runs anywhere git and gh work.
+- `verify` and `bench` run each trial in an
+  [Amazon Bedrock AgentCore Runtime](https://docs.aws.amazon.com/bedrock-agentcore/) session, so
+  the machine you type on needs no Docker. A Docker host is the second option (`--env docker`,
+  below).
+- The tasks are plain Harbor task directories, so `harbor run -p .taskmine/out/tasks -a <agent>`
+  works on any Harbor environment too.
 
-Install: Python 3.11+, git, gh, Docker and Harbor (`uv tool install harbor`). Run taskmine in place
-with `PYTHONPATH=src python3 -m taskmine` or install it with `uv tool install .`. The core is
-standard library only; the gateway needs `botocore`, and the Codex endpoint needs `litellm[proxy]`.
+Install Python 3.11+, git, gh and [uv](https://docs.astral.sh/uv/). `taskmine agentcore setup`
+makes its own Python 3.12 venv with Harbor 0.27.0 and boto3. Run taskmine in place with
+`PYTHONPATH=src python3 -m taskmine`, or install it with `uv tool install .`. The core is standard
+library only.
 
 ## What a task is
 
@@ -69,9 +78,52 @@ not behaviour. In the dogfood run that was 52% of all fail-to-pass tests.
 | `codex` | `bedrock`, `openai` | run end to end on Bedrock (GPT-6.1 Terra) through the gateway's LiteLLM endpoint |
 | `cursor`, `gemini`, `strands`, `opencode`, `aider`, `goose` | as Harbor supports them | passed to Harbor as they are; not run by taskmine yet |
 
+## Where trials run
+
+### AgentCore Runtime (default)
+
+The AgentCore side is the Harbor environment from
+[aws-samples/sample-gen-ai-evaluations-workshop#120](https://github.com/aws-samples/sample-gen-ai-evaluations-workshop/pull/120).
+It is vendored unchanged in `src/taskmine/agentcore/pr120/` (see its PROVENANCE.md).
+
+- **Images.** Each task's image is built on CodeBuild (arm64) and deployed as one AgentCore
+  runtime. `verify` builds it once and `bench` reuses it.
+- **Sessions.** Every trial, and every validation run, gets a fresh microVM session.
+- **The agent's sandbox.** The agent runs as an unprivileged user in an empty network namespace.
+  - Its only way out is an allowlist proxy to the two Bedrock endpoints.
+  - Its AWS credentials last one hour and can call only the agent models named at setup.
+- **The grader.** It runs with no network at all.
+
+taskmine rewrites a copy of each task for this:
+- the allowlist in task.toml;
+- the repository owned by the agent user;
+- Claude Code, Codex and Strands baked into the image (PR #120's layer adds OpenCode);
+- Docker Hub base images pulled from AWS's ECR Public mirror.
+
+`taskmine agentcore setup` creates IAM roles, a private ECR repository, a private S3 bucket and a
+CodeBuild project in `us-east-1`, all named `evals-tm-*`. `taskmine agentcore teardown` deletes
+them, along with the runtimes. Nothing gets a public endpoint: sessions are reached only through
+the IAM-signed AgentCore API.
+
+Limits:
+- AgentCore microVMs are **arm64**. A task whose dependencies have no arm64 build needs x86_64:
+  AgentCore runs that on EC2 instances (a capacity provider in your VPC), which taskmine does not
+  set up yet. Use a Docker host instead.
+- `--platform V1` (the default, what PR #120 tested) caps an image near 2 GB compressed. `V2`
+  allows 10 GB.
+- Grading runs in the trial's own session, as on a Docker host. PR #120's staged, sealed grading
+  needs a `test.sh --stage` that taskmine's grader does not have yet. Its trials are logged as
+  `unsealed` in `agentcore.jsonl`.
+
+### A Docker host
+
+Use `taskmine verify --env docker` and `taskmine bench --env docker` on a machine with Docker and
+Harbor (`uv tool install harbor`). Start `taskmine gateway --detach` first.
+
 **The gateway.** Agents run inside task containers, next to code they did not write. taskmine
 never hands them a cloud credential. `taskmine gateway` runs on the Docker host with the host's
-credentials, an instance role or your profile:
+credentials, an instance role or your profile. It needs `botocore`, and its OpenAI-compatible
+endpoint needs `litellm[proxy]`.
 
 - **Claude Code** runs in its own Bedrock mode. `ANTHROPIC_BEDROCK_BASE_URL` points at the gateway
   and `CLAUDE_CODE_SKIP_BEDROCK_AUTH=1` is set, so the gateway signs each request (SigV4) and

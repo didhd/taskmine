@@ -17,6 +17,12 @@ import json
 import os
 import re
 import subprocess
+from pathlib import Path
+
+# Harbor ships no default Strands agent: its runner calls a factory. taskmine's gives the agent the
+# runner's shell and file editor (templates/taskmine_strands.py).
+STRANDS_FACTORY = ["--ak", f"factory_path={(Path(__file__).parent / 'templates' / 'taskmine_strands.py').resolve()}",
+                   "--ak", "factory=taskmine_strands:create_agent"]
 from dataclasses import dataclass
 
 
@@ -124,7 +130,7 @@ def harbor_args(a: dict, region: str, root=".taskmine") -> tuple[list[str], dict
             args += ["-m", f"gateway/{model}", "--ak", "opencode_config=" + json.dumps(cfg, separators=(",", ":"))]
             ae["TASKMINE_GATEWAY_KEY"] = gw["openai_key"]
         elif a["agent"] == "strands":
-            args += ["-m", f"openai/{model}"]
+            args += ["-m", f"openai/{model}", *STRANDS_FACTORY]
             env.update(OPENAI_BASE_URL=gw["openai_url"], OPENAI_API_KEY=gw["openai_key"])
         else:
             args += ["-m", model]

@@ -6,6 +6,7 @@ Nothing here calls AWS. The rewrites run on real task directories in a temp dir.
 from __future__ import annotations
 
 import hashlib
+import shutil
 import json
 import os
 import subprocess
@@ -214,6 +215,41 @@ class HarnessCopy(unittest.TestCase):
             out = subprocess.run(["python3", "-c", f"exec(open({str(Path(d) / 'agentcore' / 'module' / 'model_config.py')!r}).read()); "
                                   "print(CODEX_MODEL_ID, JUDGE_MODEL_ID)"], capture_output=True, text=True)
             self.assertEqual(out.stdout.split()[0], "openai.gpt-6.1-terra")
+
+
+@unittest.skipUnless(shutil.which("node") and shutil.which("git"), "needs node and git")
+class ParallelRuns(unittest.TestCase):
+    """An executor whose runs are separate machines (the AgentCore one) runs the repeats at once.
+    The verdicts and the recorded run order must equal the sequential ones."""
+
+    def test_parallel_validation_equals_sequential(self):
+        import test_end_to_end as e2e
+        from taskmine import cli, config, validate
+
+        class ParallelLocal(validate.LocalExecutor):
+            parallel_runs = True
+
+        tmp = Path(tempfile.mkdtemp(prefix="taskmine-par-"))
+        try:
+            repo = tmp / "repo"
+            repo.mkdir()
+            e2e.make_repo(repo)
+            recipe = tmp / "taskmine.toml"
+            recipe.write_text(e2e.RECIPE)
+            r = ["--recipe", str(recipe), "--out", str(tmp / "out")]
+            self.assertEqual(cli.main(["scan", *r, "--repo", str(repo)]), 0)
+            self.assertEqual(cli.main(["build", *r, "--repo", str(repo), "--jobs", "1"]), 0)
+            cfg = config.load(recipe)
+            drafts = sorted(p for p in (tmp / "out" / "drafts").iterdir() if (p / "draft.json").exists())
+            self.assertGreaterEqual(len(drafts), 3)
+            for d in drafts:
+                seq = validate.validate_one(cfg, d, validate.LocalExecutor(tmp / "s1"), 2, 3, False)
+                par = validate.validate_one(cfg, d, ParallelLocal(tmp / "s2"), 2, 3, False)
+                for k in ("verdict", "reason", "fail_to_pass", "pass_to_pass", "fail_to_pass_source_text"):
+                    self.assertEqual(par.get(k), seq.get(k), (d.name, k))
+                self.assertEqual([x["kind"] for x in par["runs"]], [x["kind"] for x in seq["runs"]], d.name)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
 
 
 if __name__ == "__main__":

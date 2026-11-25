@@ -96,8 +96,9 @@ def ensure_venv(root, log=print) -> Path:
     return py
 
 
-def install_harness(root, codex_model: str) -> Path:
-    """A working copy of pr120/ plus taskmine's layer; the harness writes reports next to its own files."""
+def install_harness(root, codex_model: str | None = None) -> Path:
+    """A working copy of pr120/ plus taskmine's layer; the harness writes reports next to its own files.
+    With codex_model, also the model config that setup's bootstrap reads (it shapes the IAM policies)."""
     dest = harness(root)
     for src in sorted((HERE / "pr120").rglob("*")):
         if src.is_file() and "__pycache__" not in src.parts:
@@ -106,6 +107,8 @@ def install_harness(root, codex_model: str) -> Path:
             shutil.copy2(src, out)
     for n in ("taskmine_env.py", "taskmine_ac.py"):
         shutil.copy2(HERE / n, dest / n)
+    if codex_model is None:
+        return dest
     module = home(root) / "module"  # PR #120 reads model IDs from <module>/model_config.py and wants datasets/
     (module / "datasets").mkdir(parents=True, exist_ok=True)
     (module / "model_config.py").write_text(
@@ -166,8 +169,20 @@ def setup(root, agents: list[dict], log=print) -> int:
     codex, others = agent_models(agents)
     ensure_venv(root, log)
     install_harness(root, codex)
-    log(f"  agent role may call: {', '.join([codex, *others])} (region {REGION}, prefix {PREFIX})")
-    return _setup(root, "bootstrap", *[x for m in others for x in ("--agent-model", m)])
+    log(f"agent role may call: {', '.join([codex, *others])} (region {REGION}, prefix {PREFIX})")
+    # PR #120's bootstrap logs one line per resource, then prints its whole report as JSON: show the
+    # lines, keep the report in a file.
+    p = subprocess.Popen([str(python(root)), str(harness(root) / "harbor_env" / "setup.py"), "bootstrap",
+                          *[x for m in others for x in ("--agent-model", m)]],
+                         env=run_env(root), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    report = []
+    for line in p.stdout:
+        if re.match(r"^\d\d:\d\d:\d\d ", line):
+            log(line.rstrip()[9:].strip())
+        else:
+            report.append(line)
+    (home(root) / "bootstrap.json").write_text("".join(report))
+    return p.wait()
 
 
 def resources(root) -> int:
@@ -179,6 +194,7 @@ def teardown(root) -> int:
 
 
 def prebuild(root, tasks: Path, jobs: int, platform: str, log=print) -> list[dict]:
+    install_harness(root)  # this taskmine's copy of the harness files, never a stale one
     dirs = sorted(str(p) for p in tasks.iterdir() if (p / "task.toml").exists())
     p = subprocess.Popen([str(python(root)), str(harness(root) / "taskmine_ac.py"), "prebuild", "--jobs", str(jobs), *dirs],
                          env=run_env(root, platform), stdout=subprocess.PIPE, text=True)
@@ -248,10 +264,14 @@ class AgentCoreExecutor:
 
     name = "agentcore"
     shares_build_cache = False  # each image builds on its own CodeBuild host: nothing to wait for
+    parallel_runs = True        # every run is its own microVM session, so the repeat runs go at once
 
     def __init__(self, root, platform: str = "V1"):
         self.root, self.platform = Path(root), platform
         self.keys: dict[str, str] = {}
+        if not python(self.root).exists():
+            raise AgentCoreError("no AgentCore harness here: run `taskmine agentcore setup` first")
+        install_harness(self.root)
 
     def _helper(self, *args: str, timeout: float | None = None, stdout=subprocess.PIPE, stderr=None):
         return subprocess.run([str(python(self.root)), str(harness(self.root) / "taskmine_ac.py"), *args],
@@ -328,7 +348,8 @@ def harbor_args(a: dict, root) -> list[str]:
         return ["-a", "opencode", "-m", f"amazon-bedrock/{model}", *skip, *region, *quiet,
                 "--ak", "opencode_config=" + json.dumps(cfg, separators=(",", ":")), *extra]
     if kind == "strands":
-        return ["-a", "strands", "-m", f"amazon-bedrock/{model}", *skip, *region, *extra]
+        from taskmine.agents import STRANDS_FACTORY
+        return ["-a", "strands", "-m", f"amazon-bedrock/{model}", *STRANDS_FACTORY, *skip, *region, *extra]
     raise AgentCoreError(f"{a['name']}: {kind} is not supported on AgentCore")
 
 
