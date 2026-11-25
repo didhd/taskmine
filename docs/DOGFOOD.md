@@ -136,6 +136,66 @@ The demo used the everyday commands end to end:
 - A one-task smoke run before the demo also failed both agents on the same task. Each passed 10 of
   11 required tests, and both failed the same test.
 
+## Four agents on AgentCore Runtime (2026-11-24)
+
+Setup:
+- Everything ran from a laptop with no Docker. `taskmine agentcore setup` bootstrapped `us-east-1`
+  (prefix `evals-tm-`).
+- `bench` built one image per task on CodeBuild: 150 to 253 s each, 6 at a time.
+- Each trial ran in its own AgentCore session.
+- The tasks were 8 tasks of this dataset (seed 0). The same images served the V1 and the V2 runs.
+
+Sanity, before any model ran: oracle 1.0 and nop 0.0 on one task, with grading in the session's
+no-network phase.
+
+**V1** (the default):
+
+| agent | model | solved | errors | cost |
+|---|---|---:|---:|---:|
+| claude-code | us.anthropic.claude-sonnet-5-5 | 3 / 8 | 0 | $3.67 |
+| opencode | us.anthropic.claude-sonnet-5-5 | 3 / 8 | 0 | $8.76 |
+| strands | us.anthropic.claude-sonnet-5-5 | 3 / 8 | 4 | - |
+| codex | us.openai.gpt-6.1-terra (bedrock-mantle) | 2 / 8 | 0 | - |
+
+**V2:**
+
+| agent | model | solved | errors | cost |
+|---|---|---:|---:|---:|
+| claude-code | us.anthropic.claude-sonnet-5-5 | 3 / 8 | 0 | $3.28 |
+| codex | us.openai.gpt-6.1-terra (bedrock-mantle) | 3 / 8 | 0 | - |
+| opencode | us.anthropic.claude-sonnet-5-5 | 3 / 8 | 0 | $7.02 |
+| strands | us.anthropic.claude-sonnet-5-5 | 3 / 8 | 1 | - |
+
+Notes:
+- Every agent that solved anything solved `pr5128` and `pr5462`. Codex on V1 was the only one to
+  miss `pr5861`.
+- Harbor reports no cost for Codex and Strands on Bedrock, so those cells are empty.
+- The Strands errors were taskmine's to fix:
+  - On V1, 4 trials stopped with `MaxTokensReachedException`. Strands' default output limit is
+    now raised to 32,000.
+  - On V2, 1 trial was cut by AgentCore after 15 minutes without output. The Strands runner
+    prints nothing, so taskmine's agent now prints a line a minute.
+- Before those fixes, OpenCode and Strands had also run on GPT-6.1 Terra: 0 of 8, 8 errors each.
+  - OpenCode: Bedrock Converse refused Terra in this account with
+    `data retention mode 'none' is not available for this model`. A plain one-message Converse
+    call with the scoped agent credentials got the same answer.
+  - Strands: Harbor ships no default Strands factory.
+
+**V1 against V2** (p50 / p90 seconds; 32 trials each):
+
+| | session first call | environment setup | agent run | grading | trial |
+|---|---|---|---|---|---|
+| V1 | 1.0 / 1.9 | 3.6 / 4.4 | 132 / 312 | 12 / 23 | 165 / 397 |
+| V2 | 7.8 / 9.0 | 10.8 / 11.4 | 239 / 443 | 18 / 34 | 301 / 593 |
+
+**`verify` on AgentCore.**
+- A new draft (`pr8572`) was mined and validated there: accepted with fail-to-pass 2 and
+  pass-to-pass 6, the same verdict the Docker host had given.
+- Its 8 runs took 69 to 79 s each on V1, and 166 to 217 s on V2 (125 to 139 s with the build
+  hook).
+- Running the repeat runs at once took the draft from about 830 s to 501 s.
+- AGENTS.md ("Decisions and why") has the full table and the reasons V1 stays the default.
+
 ## A Python repository
 
 A small synthetic repository: a package, pytest tests and two `--no-ff` merges. One merge adds a

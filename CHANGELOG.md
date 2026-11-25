@@ -55,10 +55,20 @@ differences from the untagged code that was on `main` before it.
   - the pass-through serves only loopback and private addresses, and the LiteLLM endpoint needs a
     key taskmine generates; `--detach` runs the gateway in the background with its log in
     `.taskmine/gateway.log`, and `.taskmine/gateway.toml` (mode 0600) says where it listens.
-- Agents: `claude-code` and `codex` on Bedrock have been run end to end. `cursor`, `gemini`,
-  `strands`, `opencode`, `aider` and `goose` are passed to Harbor as they are. Strands runs with
-  taskmine's factory (`templates/taskmine_strands.py`): the runner's shell and file editor, a
-  short system prompt and up to 32,000 output tokens per call.
+- AgentCore platform V2 as an option (`--platform V2`; V1 stays the default, measured faster for
+  test runs that read many small files). V2 runtimes are named `<V1 name>_v2`, so both can
+  serve one image. `TASKMINE_AC_WARMUP=1` adds AgentCore's build hook, which reads the image
+  files sessions need while the V2 snapshot is built.
+- Agents:
+  - Run end to end:
+    - `claude-code`, `codex`, `opencode` and `strands` on AgentCore;
+    - `claude-code` and `codex` on a Docker host through the gateway.
+  - `cursor`, `gemini`, `aider` and `goose` are passed to Harbor as they are.
+  - Strands runs with taskmine's factory (`templates/taskmine_strands.py`):
+    - the runner's shell and file editor and a short system prompt;
+    - up to 32,000 output tokens per call;
+    - on AgentCore, its Bedrock model is built inside the session;
+    - a line on stdout a minute, so AgentCore does not end a quiet command.
 - The pipeline commands, each with `--recipe` and `--out`: `scan`, `meta`, `build`, `validate`,
   `finalize`, `check` and `report`. Every step records a code and a reason for each unit it leaves
   out, and `report` writes the funnel as `report.md` and `report.json`.

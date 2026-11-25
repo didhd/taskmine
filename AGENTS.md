@@ -132,4 +132,360 @@ CHANGELOG.md entry, then a `vX.Y.Z` tag that the release workflow turns into a G
 
 ## Decisions and why
 
-(Filled in by the maintainer.)
+Each entry says what was decided, why, and what it costs. They are measured where a number is
+given; "measured" means on the dogfood repository (a 28,000-commit TypeScript monorepo) unless it
+says otherwise. Before changing one of these, read its reason. Several look like accidents and are
+not.
+
+### What a task is
+
+**Coding tasks only.** The agent changes the repository and tests grade it. Review tasks (approve or
+reject a diff) are out of scope. They need labelled review history, not tests, and other tools make
+them.
+
+**The repository at the base commit, with no history.** The image holds the files of the commit
+before the change and a fresh one-commit git repository tagged `taskmine-base`.
+- Why: the merged answer is in the history (the merge commit, later commits, reflogs, packed
+  objects). A clone with history leaks the answer.
+- How it is checked: the snapshot is re-read after it is written, and every file is compared with
+  the base commit's blob.
+- Cost: an agent cannot use `git log` or `git blame` for context.
+
+**The instruction is assembled, never written by a model.** Its parts:
+- the PR title;
+- the issue the PR closed, quoted, only when it was opened before the PR and passes the leak check;
+- the fail-to-pass test names, verbatim;
+- the interface contract.
+
+Why:
+- A model-written instruction is not reproducible.
+- It can paraphrase the fix into the prompt.
+- It reads as generated text.
+
+**PR bodies are never used.** They describe the fix ("this adds X to Y by calling Z"). Using them
+leaks the solution.
+
+**The interface contract.**
+- What it is: the names, modules and exact strings that the hidden tests use and that the change
+  adds.
+- Why: without it, a correct fix under a different function name fails every test, and the task
+  measures guessing.
+- Bounded at 150 checks (`contract.MAX_CHECKS`). Without the bound, a large test fixture stalled a
+  build.
+- Contract strings that are lines of the gold patch's code are dropped. Quoting them would hand the
+  agent the fix.
+
+**The leak check.** The quoted issue and the contract are checked against the gold patch.
+- Paths the agent must touch anyway are allowed (`leak.stated_paths`), and comment lines are
+  skipped.
+- Without these two, issues were rejected only for naming the file they were about.
+
+### Validation (what makes a draft a task)
+
+**Base twice, gold three times.**
+- A test is fail-to-pass only if it fails in both base runs and passes in all three gold runs.
+- One run each let flaky tests through as fail-to-pass, and a flaky required test makes the task
+  unsolvable at random.
+- The counts are the `verify` defaults (`--base-runs`, `--gold-runs` on `validate`).
+
+**The source-text probe (Node).**
+- It re-runs the gold state with a preload (`templates/textprobe.mjs`). The preload hands test
+  code the base commit's text whenever it reads a changed source file.
+- A fail-to-pass test that then fails was checking the source text (a regex over a file, a string
+  the code must contain), not behaviour. Such tests are never required, because they reward
+  spelling the fix the same way.
+- Measured: 52% of all fail-to-pass tests were source-text tests.
+- Other runtimes fall back to a static, file-level check, which is coarser.
+
+**Harbor's nop agent must score 0, and its oracle agent 1.**
+- This is the last gate, run through the task's real `test.sh`.
+- It catches a grader that passes an empty patch, and a gold patch that does not apply to the
+  snapshot.
+
+**JUnit XML is the only interface to a test runner.**
+- Every mainstream runner writes it, which is what makes taskmine language-agnostic.
+- pytest writes the file path into its report only with `-o junit_family=xunit1`, so the starter
+  recipe sets that.
+
+**The grader restores test-side files before it runs the tests.** An agent can edit or delete the
+hidden tests' neighbours (fixtures, helpers, configuration). The grader puts back every test-side
+file from `taskmine-base` first.
+
+**The reward file starts at 0.** `test.sh` writes 0 before anything else, so a missing python3 or
+a crashed grader fails closed.
+
+**Deterministic output.**
+- Snapshots, drafts and tasks carry digests (`snapshot_sha256`, `draft_digest`,
+  `deps_fingerprint`).
+- Measured: a sample of 10 tasks rebuilt byte for byte on a second machine.
+- Why: a benchmark nobody can rebuild is not a benchmark, and the digests make reviews of a
+  dataset change mechanical.
+
+### Mining
+
+**A blob-filtered clone (`--filter=blob:limit=9m`).**
+- Large repositories clone in a fraction of the time.
+- Blobs over 9 MB stay on GitHub.
+- A blob the clone does not hold gets `MISSING_SIZE`, which sorts above every size cap. While the
+  clone's filter is above the snapshot's `max_file_bytes` (5 MB by default), a draft from a filtered
+  clone is byte-identical to one from a full clone.
+- Measured: a 1 MB cap dropped real source files from snapshots, so the cap is a recipe setting.
+
+**Every exclusion has a code and a reason.** `scan`, `build`, `validate` and `finalize` record why
+each PR was left out (`no-test-change`, `source-text-only`, `nop-not-zero` and the rest). The
+funnel in `report.md` is built from those records, so it can be audited.
+
+### Where trials run
+
+**AgentCore Runtime is the default; a Docker host is the second option.**
+- Docker needed a big host for parallel validation: image builds, a gateway, address pools, disk.
+  People who had made the same switch for review tasks advised it: Docker had been too big, too
+  complicated and too slow.
+- On AgentCore the laptop needs no Docker. Each trial is a fresh microVM, and parallelism is a
+  quota, not a machine size.
+- Docker stays for x86_64-only dependencies and for machines without AWS.
+
+**Reuse PR #120 instead of writing an AgentCore environment.**
+- The AgentCore environment for Harbor in aws-samples/sample-gen-ai-evaluations-workshop PR #120
+  already has the hard parts:
+  - an agent in an empty network namespace behind an allowlist proxy;
+  - per-phase credentials;
+  - checked downloads;
+  - staged grading;
+  - a teardown.
+- Its author had tested it.
+- Writing a second one would split the effort and the bug reports.
+
+**Vendored byte for byte, with a test that checks each file's git blob.**
+- The PR is not merged and not packaged, so it cannot be a dependency.
+- A byte-identical copy makes an update mechanical (copy, replace the blob table, run the tests),
+  and it stops anyone from "fixing" upstream code here silently.
+- taskmine's changes live outside `pr120/`:
+  - `taskmine_env.py`: the platform version and the V2 runtime name;
+  - `taskmine_ac.py`: bounded prebuild, and the validation build/run/remove;
+  - `agentcore/__init__.py`: task rewrites and Harbor flags.
+
+**Region `us-east-1`, prefix `evals-tm-`.**
+- PR #120 creates its clients and endpoints for `us-east-1` at import.
+- Its teardown refuses any prefix that does not start with `evals-`, and it touches only
+  resources of its prefix. A distinct prefix keeps taskmine's resources apart from anyone else's
+  PR #120 deployment in the same account.
+
+**Short-lived, scoped credentials in the agent's session, not a gateway.**
+- Nothing on the operator's machine is reachable from an AgentCore microVM, so the Docker path's
+  gateway cannot work here.
+- The agent gets PR #120's agent-role credentials instead:
+  - they last 1 hour;
+  - they allow only `bedrock:InvokeModel` and `InvokeModelWithResponseStream` on the models named
+    at setup, plus the one Codex model on bedrock-mantle;
+  - they are written by root into a per-phase file the agent cannot change.
+- The grader phase switches to the runtime role's credentials and the agent's processes are
+  killed first.
+- Cost: an agent could spend model tokens on the allowed models for an hour, and nothing more.
+
+**Rewrites of each task for AgentCore.** `prepare()` makes the copies; the source tasks never
+change. Each rewrite has a reason:
+- **The agent's network is an allowlist of the two Bedrock hosts.** PR #120 refuses `public` for
+  the agent: outside the firewall the agent could read the runtime role from the metadata service.
+- **The grader gets no network.** taskmine's grader needs none, so it gets none.
+- **`/app` is owned by uid 2000.** PR #120 runs the agent as `agent` (uid 2000), and the agent
+  must be able to change the repository. Cost: `chown -R` copies `/app` into one more image layer.
+- **The harnesses are baked in, at pinned versions:**
+  - Claude Code 2.1.327, Codex 0.162.1, Strands Agents 1.54.0 in `/installed-agent/strands/venv`;
+  - OpenCode 1.19.6, which PR #120's layer adds.
+
+  Harbor installs harnesses as the agent user, and behind the firewall those installs fail.
+  `skip_install=true` makes Harbor use what the image has.
+- **Docker Hub base images come from `public.ecr.aws/docker/library`.** CodeBuild shares egress
+  IPs and hits Docker Hub's anonymous pull limit. The mirror serves the same digests, so the base
+  stays pinned.
+
+**Harbor 0.27.0, though PR #120 tested 0.26.0.** The owner chose 0.27.0, and the environment's API
+surface was compared before switching:
+- the 9 abstract methods;
+- the `exec` signature;
+- the phase network policy API;
+- `_resolve_user` and `_merge_env`;
+- the verifier command format `(/tests/test.sh) > ... 2>&1`, which PR #120's staged grader
+  matches.
+
+The smoke run (oracle 1.0, nop 0.0) and the bench ran on 0.27.0.
+
+**Grading is "unsealed" on AgentCore for now.**
+- PR #120 seals grading only for a `test.sh` that supports `--stage untrusted|trusted`.
+  taskmine's does not yet, so the test run happens in the trial's own session as the agent user.
+  That is the same trust level as Harbor on a Docker host, where the verifier runs in the agent's
+  container.
+- The grader still restores test-side files first, and runs with no network.
+- Next step: a staged `test.sh`, whose untrusted stage runs the tests and whose trusted stage
+  reads JUnit and writes the reward.
+
+**Images are built before any agent starts.**
+- PR #120 locks a build per image within one process. `bench` runs one Harbor process per agent,
+  so four agents would build the same image four times and race to create its runtime.
+- `taskmine_ac.py prebuild` builds each image once, a bounded number at a time (`--build-jobs`).
+  PR #120's own `setup.py prebuild` starts every build at once.
+
+**`verify` and `bench` share images.**
+- PR #120 names an image by a hash of the environment directory, its layer and the firewall files,
+  prefixed with the task name.
+- The validation executor builds from the draft's directory name, which is the final task's name,
+  with the same rewritten Dockerfile. `bench` therefore finds the image that `verify` built.
+
+**One fresh session per validation run.** The Docker executor runs every base, gold, probe, nop and
+oracle run in a new container (`docker run --rm --network none`). The AgentCore executor does the
+same with a new session per run, as the agent user, with an empty allowlist and no credentials.
+
+**V1 is the default; V2 is an option (`--platform V2`), measured slower for this workload.**
+
+V2 restores each session from a snapshot instead of pulling the image. But a restored session
+fetches image blocks the first time it reads them, and a test run here reads thousands of small
+files under `node_modules`.
+
+Measured on 2026-11-24 in `us-east-1`, same images and same tasks.
+
+Validation of one draft (8 runs):
+
+| | build + deploy | test command per run | validate wall |
+|---|---|---|---|
+| V1, sequential runs | 189 s | 69-71 s | ~830 s |
+| V1, parallel runs | 190 s | 69-79 s | 501 s |
+| V2 | 496 s | 166-217 s | 1317 s |
+| V2 + warmup hook | 914 s | 125-139 s | 1494 s |
+
+Bench of 4 agents x 8 tasks (p50 / p90 seconds):
+
+| | session first call | environment setup | agent run | grading | trial |
+|---|---|---|---|---|---|
+| V1 | 1.0 / 1.9 | 3.6 / 4.4 | 132 / 312 | 12 / 23 | 165 / 397 |
+| V2 | 7.8 / 9.0 | 10.8 / 11.4 | 239 / 443 | 18 / 34 | 301 / 593 |
+
+- Solve counts were the same within noise: 11 of 32 on V1, 12 of 32 on V2.
+- Agent run time also includes model latency. The session, setup and test-command times do not,
+  and V2 was slower on every one of them.
+- Creating a V2 runtime also takes minutes longer, because the snapshot is built at deploy.
+
+**The V2 build hook is opt-in (`TASKMINE_AC_WARMUP=1`).** It follows AgentCore's own guidance for
+agents that read many files.
+- How it works:
+  - The image's command starts a small endpoint on :9090, then PR #120's shim.
+  - AgentCore calls the endpoint twice. On the `disk` call it reads `/app`, the harnesses and the
+    global npm tree for up to 90 seconds.
+  - The image gets its own tag (`w` plus a hash of the hook), so it never shadows a plain V2
+    image.
+- Measured:
+  - It cut the V2 test command from 166-217 s to 125-139 s, still about twice V1.
+  - It made the deploy 724 s.
+  - Reading 1 GB of image files took longer than the 120 s budget, so the hook reads what it can.
+  - A first version checked its deadline only between files, ran one call to 121 s, and failed
+    the runtime's creation. The deadline is now checked between 1 MB reads.
+- V2 runtimes are named `<V1 name>_v2`, so both platforms can serve the same image side by side.
+
+**Validation runs at once on AgentCore.** Every validation run is its own microVM, so an
+executor with `parallel_runs` runs the repeat base and gold runs together, and then nop with
+oracle.
+- Measured: 501 s instead of about 830 s for one draft.
+- A test checks that the verdicts and the recorded run order equal the sequential ones.
+- The Docker and local executors keep running one at a time: they share one machine.
+
+**OpenCode and Strands run on Claude, not GPT-6.1 Terra.**
+- In this account, Bedrock Converse refuses Terra: `ValidationException: data retention mode
+  'none' is not available for this model`. That was measured with a plain one-message Converse
+  call and the scoped agent credentials.
+- It is an account-level data retention setting, which taskmine does not change.
+- Codex reaches Terra through bedrock-mantle (the Responses API), which is not affected.
+- So OpenCode and Strands run on Sonnet 5.5. Three harnesses on one model also make a cleaner
+  comparison of the harnesses themselves.
+
+**Strands needs three things from taskmine that Harbor does not supply:**
+- **A factory.** Harbor's runner imports `agent:create_agent` by default and ships no such
+  module. `templates/taskmine_strands.py` gives Strands the runner's shell and file editor and a
+  short system prompt.
+- **Its Bedrock model, built in the session.**
+  - On AgentCore the credentials exist only inside the session, so Harbor resolves no provider
+    and falls back to its litellm path, which is not installed.
+  - taskmine passes the model ID in `factory_kwargs`, and the factory builds a `BedrockModel`
+    with the session's credentials.
+- **Room to answer, and a heartbeat:**
+  - 32,000 output tokens per call. The default stopped 4 of 8 trials with
+    `MaxTokensReachedException`.
+  - A line on stdout a minute, because AgentCore ends a command that sends no byte for 15
+    minutes. The runner prints nothing, and 1 of 8 trials was cut this way.
+
+**The one place an agent holds a cloud credential.** taskmine's rule is that an agent never holds
+a cloud credential, and on a Docker host the gateway keeps it that way. On AgentCore there is no
+host a microVM can reach, so the agent gets PR #120's short-lived, model-scoped credentials. This
+is the only exception, and its limits are above. If AgentCore gains a way to sign requests outside
+the session, use it.
+
+**x86_64 is not on AgentCore yet.**
+- AgentCore microVMs are arm64.
+- x86_64 on AgentCore means EC2 instances from a capacity provider (`LINUX_X86_64`) in a VPC,
+  with subnets, security groups and an operator role. That is new network infrastructure in the
+  user's account.
+- Until that is designed and reviewed, a task that needs x86_64 runs on a Docker host.
+
+**The models.**
+- Claude Code runs on Claude (Sonnet 5.5).
+- Codex reaches GPT models on bedrock-mantle, which takes the bare model ID
+  (`openai.gpt-6.1-terra`), not a `us.` inference profile, so `codex_model()` strips the prefix.
+  PR #120 allows one Codex model per setup.
+- OpenCode and Strands call Bedrock Converse with the `us.` inference profile.
+- The non-Claude agents all use GPT-6.1 Terra, so their results compare on one model.
+
+**`AWS_BEARER_TOKEN_BEDROCK` is removed from the harness environment.** With it set, PR #120's
+bootstrap builds the grader policy for the wrong model ARNs, and judge or grader calls are refused.
+
+### The Docker path
+
+**A gateway, so containers never hold a credential.**
+- Claude Code runs in its own Bedrock mode against the gateway (`ANTHROPIC_BEDROCK_BASE_URL`,
+  `CLAUDE_CODE_SKIP_BEDROCK_AUTH=1`). The gateway signs each request with SigV4 and streams
+  Bedrock's answer back unchanged.
+- Agents that speak an OpenAI API (Codex, OpenCode, Strands) go through LiteLLM on the gateway.
+- The gateway serves only private and loopback clients.
+- Containers must be blocked from the instance metadata endpoint
+  (`iptables -I DOCKER-USER -d 169.254.169.254 -j DROP`), or the gateway's isolation means
+  nothing.
+
+**LiteLLM is started through its own CLI, and taskmine waits until it answers.**
+`python -m litellm` does not start the proxy. A gateway that printed its URL before LiteLLM was up
+failed the first bench.
+
+**Build groups are interleaved.**
+- The first draft of each dependency fingerprint builds alone, and the rest of its group reuses
+  Docker's cache (`BuildGate`).
+- Sorted by group, every worker waited behind one install: measured, 75% of a 32-vCPU box sat
+  idle. Round-robin keeps workers on different groups.
+- On AgentCore there is no shared cache, so the gate is off (`shares_build_cache = False`).
+
+### Benchmarks and results
+
+**An error is not a failure.**
+- A trial that ended in an exception (an install failed, a model refused the credentials, a
+  timeout) counts as an error, not as unsolved.
+- Why: infrastructure problems must be visible, not hidden in a lower score.
+
+**`oracle` and `nop` are built-in bench agents.** They sanity-check a task set on a new
+environment before real agents spend tokens.
+
+**`results` shows the run that finished last.** It picks by the mtime of `results.json`. Sorting by
+name once showed an older run ("smoke").
+
+### Engineering
+
+**The core is standard library only.**
+- `mine` runs anywhere Python, git and gh do.
+- Heavy dependencies are isolated:
+  - the gateway (`botocore`, `litellm[proxy]`) is an optional extra;
+  - the AgentCore harness has its own venv (Harbor, boto3 >= 1.44.7), which
+    `taskmine agentcore setup` makes with uv.
+
+**Tests use real git repositories and real test runs, never mocks.** The failures that matter come
+from git (filtered clones, merge shapes, dubious ownership) and from test runners (JUnit dialects,
+probes). A mock of either tests the mock.
+
+**The demo is a real terminal session.**
+- `demo/record.py` types each command and runs it in a pseudo-terminal, recording output with
+  the times it arrived. Nothing is edited.
+- `--idle 0` keeps every interval as it happened. Any shortening is stated next to the video.

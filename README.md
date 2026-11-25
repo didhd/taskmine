@@ -72,11 +72,22 @@ not behaviour. In the dogfood run that was 52% of all fail-to-pass tests.
 
 ## Agents
 
-| agent | providers | status |
+| agent | providers | run end to end |
 |---|---|---|
-| `claude-code` | `bedrock`, `anthropic` | run end to end on Bedrock (Sonnet 5.5) through the gateway |
-| `codex` | `bedrock`, `openai` | run end to end on Bedrock (GPT-6.1 Terra) through the gateway's LiteLLM endpoint |
-| `cursor`, `gemini`, `strands`, `opencode`, `aider`, `goose` | as Harbor supports them | passed to Harbor as they are; not run by taskmine yet |
+| `claude-code` | `bedrock`, `anthropic` | AgentCore and Docker, Sonnet 5.5 |
+| `codex` | `bedrock`, `openai` | AgentCore (bedrock-mantle) and Docker (the gateway's LiteLLM), GPT-6.1 Terra |
+| `opencode` | `bedrock`, `anthropic`, `openai` | AgentCore, Sonnet 5.5 |
+| `strands` | `bedrock`, `openai` | AgentCore, Sonnet 5.5, with taskmine's default coding agent (`templates/taskmine_strands.py`) |
+| `cursor`, `gemini`, `aider`, `goose` | as Harbor supports them | passed to Harbor as they are; not run by taskmine yet |
+
+On 8 tasks from the dogfood set, on AgentCore V1:
+- Claude Code, OpenCode and Strands (all on Sonnet 5.5) each solved 3.
+- Codex on GPT-6.1 Terra solved 2.
+- On V2, all four solved 3.
+
+See [docs/DOGFOOD.md](docs/DOGFOOD.md). In the account we measured, Bedrock Converse refused GPT-6.1
+Terra (`data retention mode 'none' is not available for this model`), so OpenCode and Strands ran
+on Claude.
 
 ## Where trials run
 
@@ -109,8 +120,15 @@ Limits:
 - AgentCore microVMs are **arm64**. A task whose dependencies have no arm64 build needs x86_64:
   AgentCore runs that on EC2 instances (a capacity provider in your VPC), which taskmine does not
   set up yet. Use a Docker host instead.
-- `--platform V1` (the default, what PR #120 tested) caps an image near 2 GB compressed. `V2`
-  allows 10 GB.
+- `--platform V1` is the default (what PR #120 tested) and caps an image near 2 GB compressed.
+  `--platform V2` allows 10 GB and restores each session from a snapshot. On this workload V2 was
+  slower, because a restored session fetches image blocks on first read and the tests read
+  thousands of small files:
+  - session start p50 7.8 s against 1.0 s;
+  - a validation test run 166-217 s against 69-71 s.
+
+  `TASKMINE_AC_WARMUP=1` adds AgentCore's build hook to pre-read the files (V2 test runs:
+  125-139 s). The numbers are in AGENTS.md ("Decisions and why").
 - Grading runs in the trial's own session, as on a Docker host. PR #120's staged, sealed grading
   needs a `test.sh --stage` that taskmine's grader does not have yet. Its trials are logged as
   `unsealed` in `agentcore.jsonl`.
