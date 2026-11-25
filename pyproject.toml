@@ -1,24 +1,91 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "taskmine"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Mine a repository's merged pull requests into execution-verified Terminal-Bench (Harbor) coding tasks."
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "MIT-0" }
+license = "MIT-0"
+license-files = ["LICENSE"]
 dependencies = []
+keywords = [
+    "benchmark",
+    "coding-agents",
+    "terminal-bench",
+    "harbor",
+    "evaluation",
+    "pull-requests",
+    "swe-bench",
+    "llm",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Testing",
+]
+
+[project.optional-dependencies]
+# `taskmine gateway`: SigV4 signing for the Bedrock pass-through, and LiteLLM for the OpenAI-compatible endpoint.
+gateway = ["botocore", "litellm[proxy]"]
+# `--env agentcore`: the Harbor release and boto3 that the AgentCore runner is tested with.
+agentcore = ["boto3>=1.44.7", "harbor==0.27.0"]
 
 [project.urls]
+Homepage = "https://github.com/didhd/taskmine"
 Repository = "https://github.com/didhd/taskmine"
+Issues = "https://github.com/didhd/taskmine/issues"
+Changelog = "https://github.com/didhd/taskmine/blob/main/CHANGELOG.md"
 
 [project.scripts]
 taskmine = "taskmine.cli:main"
 
-[build-system]
-requires = ["setuptools>=68"]
-build-backend = "setuptools.build_meta"
+[tool.setuptools.dynamic]
+# The one place the version is written: src/taskmine/__init__.py.
+version = { attr = "taskmine.__version__" }
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
-taskmine = ["templates/*"]
+# Task templates, and everything under agentcore/ (the vendored harness ships its scripts and Dockerfiles as is).
+taskmine = ["templates/*", "agentcore/**/*"]
+
+[tool.setuptools.exclude-package-data]
+taskmine = ["**/__pycache__/*", "**/*.pyc"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 130
+extend-exclude = [
+    "src/taskmine/agentcore/pr120",  # vendored byte for byte from upstream; never reformatted or linted
+]
+
+[tool.ruff.lint]
+# Errors, not style: pyflakes, pycodestyle's error classes (imports, statements, syntax), warnings
+# and bugbear. Import order and formatting are not enforced.
+select = ["E4", "E7", "E9", "F", "W", "B"]
+ignore = [
+    "E731",  # small named lambdas are used for one-line helpers
+    "E741",  # `l` is the usual name for a line in a short comprehension
+    "B905",  # zip() without strict=: the lengths are equal by construction where it is used
+]
+
+[tool.ruff.lint.per-file-ignores]
+"demo/record.py" = ["E401"]  # one-line import of three POSIX-only modules, inside the function that needs them
+# Checked by hand: prepare()'s `ignore` lambda is called by copytree within the same loop iteration.
+"src/taskmine/agentcore/__init__.py" = ["B023"]
+# STRANDS_FACTORY sits above `from dataclasses import dataclass`; drop this once that import moves up.
+"src/taskmine/agents.py" = ["E402"]

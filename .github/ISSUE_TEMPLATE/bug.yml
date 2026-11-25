@@ -1,0 +1,43 @@
+name: Bug report
+description: taskmine did something wrong, or crashed.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Security problems go to private vulnerability reporting (see SECURITY.md), not here.
+        Remove anything private (repository names, paths, tokens) from what you paste.
+  - type: input
+    id: version
+    attributes:
+      label: taskmine version
+      description: The output of `taskmine --version`, or the commit you run from.
+      placeholder: taskmine 0.1.0
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: Command and output
+      description: The command you ran and everything it printed. For one draft or task, add its `validation.json`, `draft.json` or `task.toml`.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected instead
+    validations:
+      required: true
+  - type: textarea
+    id: recipe
+    attributes:
+      label: Recipe
+      description: The relevant part of `taskmine.toml`, if the problem is in scan, build, validate or finalize.
+      render: toml
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, Python, git and Node versions; Docker and Harbor versions for verify and bench.
+      placeholder: macOS 15, Python 3.12.8, git 2.47, Node 24.1, Docker 28.0, Harbor 0.27.0

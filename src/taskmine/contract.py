@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import posixpath
 import re
+from collections import Counter
 from dataclasses import asdict, dataclass, field
 
 MAX_NAMES = 25
@@ -211,6 +212,10 @@ def source_text_reads(test_sources: dict[str, str], gold_code_paths: set[str], w
     explainable: the test file calls a file-reading function, and one of its string literals names
     a file the gold change touches (as a path relative to the test, the profile's workdir or the
     repository root, or as a bare file name when the path is assembled with join()).
+
+    An import specifier names a module to load, not a file to read: a test that imports a changed
+    module and reads a fixture is not reading the module's text. Each import of a path discounts
+    one occurrence of that string, so a path that is both imported and read still counts.
     """
     by_name: dict[str, set[str]] = {}
     for g in gold_code_paths:
@@ -220,8 +225,12 @@ def source_text_reads(test_sources: dict[str, str], gold_code_paths: set[str], w
         code, strings = split_source(path, src)
         if not _READ_CALL.search(code):
             continue
+        imports = Counter(m.group(2) for m in _IMPORT.finditer(src))
         hits: set[str] = set()
         for value, is_title in strings:
+            if imports[value] > 0:
+                imports[value] -= 1
+                continue
             v = value.strip()
             if is_title or not v or len(v) > 300 or "\n" in v:
                 continue
