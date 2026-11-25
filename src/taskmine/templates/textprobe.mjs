@@ -45,8 +45,11 @@ let changed = new Set();
 try {
   const out = execFileSync('git', ['-C', APP, 'diff', '--name-only', '--no-renames', 'taskmine-base'], { encoding: 'utf8' });
   changed = new Set(out.split('\n').filter((p) => p && !isTestSide(p)));
-} catch {
+} catch (e) {
+  // Fail closed: without the changed files the probe would substitute nothing, and a source-text
+  // test would pass as if it tested behaviour. The validator rejects the draft on this line.
   changed = new Set();
+  if (LOG) try { fs.appendFileSync(LOG, '!error ' + String(e.message || e).split('\n')[0] + '\n'); } catch {}
 }
 
 const relOf = (p) => {

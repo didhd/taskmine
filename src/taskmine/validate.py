@@ -105,7 +105,7 @@ class LocalExecutor:
     name = "local"
 
     def __init__(self, scratch: Path):
-        self.scratch = scratch
+        self.scratch = Path(scratch).resolve()  # the probe and the grader run from inside the app dir
 
     def build(self, ctx: Path, tag: str, log: Path, timeout: float) -> bool:
         template = self.scratch / tag.replace("/", "_").replace(":", "_") / "app"
@@ -239,25 +239,44 @@ def validate_one(cfg: Config, draft: Path, ex, base_runs: int, gold_runs: int, k
     n = {"i": 0}
 
     def run(kind: str, with_solution: bool, probe: bool = False) -> dict:
-        n["i"] += 1
-        name = f"tm-{cand['id']}-{digest[:8]}-{n['i']}"
-        logs = vdir / f"{n['i']:02d}-{kind}"
-        r = ex.run(tag, draft, with_solution, logs, prof, name, cfg.tests.patterns if probe else None)
-        result["runs"].append(_summ(kind, r))
-        if probe:
-            read = logs / "textprobe.log"
-            r["substituted"] = sorted(set(read.read_text().split())) if read.exists() else []
-        return r
+        return runs([(kind, with_solution, probe)])[0]
 
-    bases = [run("base", False)]
-    golds = [run("gold", True)]
+    def runs(specs: list[tuple[str, bool, bool]]) -> list[dict]:
+        """Run in this order. An executor whose runs are separate machines (AgentCore sessions) runs them at once."""
+        slots = []
+        for kind, with_solution, probe in specs:
+            n["i"] += 1
+            slots.append((kind, with_solution, probe, f"tm-{cand['id']}-{digest[:8]}-{n['i']}", vdir / f"{n['i']:02d}-{kind}"))
+
+        def one(s):
+            kind, with_solution, probe, name, logs = s
+            r = ex.run(tag, draft, with_solution, logs, prof, name, cfg.tests.patterns if probe else None)
+            if probe:
+                read = logs / "textprobe.log"
+                lines = read.read_text().splitlines() if read.exists() else []
+                r["substituted"] = sorted({ln for ln in lines if ln and not ln.startswith("!error ")})
+                r["probe_error"] = next((ln[7:] for ln in lines if ln.startswith("!error ")), None)
+            return r
+
+        if getattr(ex, "parallel_runs", False) and len(slots) > 1:
+            with ThreadPoolExecutor(max_workers=len(slots)) as pool:
+                out = list(pool.map(one, slots))
+        else:
+            out = [one(s) for s in slots]
+        for s, r in zip(slots, out):
+            result["runs"].append(_summ(s[0], r))
+        return out
+
+    first = runs([("base", False, False), ("gold", True, False)])
+    bases, golds = [first[0]], [first[1]]
     if golds[0]["solve_failed"]:
         return done("rejected", "gold-patch-does-not-apply")
     a = analyse(bases, golds)
     if not a["fail_to_pass"]:
         return done("rejected", _why_no_f2p(a), **a)
-    bases += [run("base", False) for _ in range(base_runs - 1)]
-    golds += [run("gold", True) for _ in range(gold_runs - 1)]
+    more = runs([("base", False, False)] * (base_runs - 1) + [("gold", True, False)] * (gold_runs - 1))
+    bases += more[:base_runs - 1]
+    golds += more[base_runs - 1:]
     a = analyse(bases, golds)
     if not a["fail_to_pass"]:
         return done("rejected", "fail-to-pass-was-flaky", **a)
@@ -265,6 +284,8 @@ def validate_one(cfg: Config, draft: Path, ex, base_runs: int, gold_runs: int, k
         if prof.text_probe == "node":
             # Gold state, but test code that reads a changed source file gets the base text.
             tp = run("textprobe", True, probe=True)
+            if tp.get("probe_error"):
+                return done("rejected", "text-probe-failed", probe_error=tp["probe_error"], **a)
             text_tests = [t for t in a["fail_to_pass"] if tp["statuses"].get(t) != "passed"]
             a["text_probe_substituted"] = tp.get("substituted", [])
         else:
@@ -276,10 +297,13 @@ def validate_one(cfg: Config, draft: Path, ex, base_runs: int, gold_runs: int, k
             return done("rejected", "source-text-only", **a)
 
     exp.write_text(json.dumps({"fail_to_pass": a["fail_to_pass"], "pass_to_pass": a["pass_to_pass"]}, indent=1) + "\n")
-    nop = run("nop", False)
+    if getattr(ex, "parallel_runs", False):
+        nop, oracle = runs([("nop", False, False), ("oracle", True, False)])
+    else:
+        nop, oracle = run("nop", False), None
     if nop.get("reward") != 0:
         return done("rejected", "nop-not-zero", **a)
-    oracle = run("oracle", True)
+    oracle = oracle or run("oracle", True)
     if oracle.get("reward") != 1:
         return done("rejected", "oracle-not-one", **a)
     return done("accepted", "", **a)
@@ -317,7 +341,7 @@ class BuildGate:
 def validate_all(cfg: Config, drafts: list[Path], ex, jobs: int, base_runs: int, gold_runs: int,
                  keep_image: bool, summary_dir: Path, log=print) -> list[dict]:
     summary_dir.mkdir(parents=True, exist_ok=True)
-    gate = BuildGate()
+    gate = BuildGate() if getattr(ex, "shares_build_cache", True) else None
     results = []
     with ThreadPoolExecutor(max_workers=jobs) as pool:
         futs = {pool.submit(validate_one, cfg, d, ex, base_runs, gold_runs, keep_image, gate): d for d in drafts}

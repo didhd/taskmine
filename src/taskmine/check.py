@@ -13,7 +13,6 @@ What a reviewer of a dataset (or a CI job) can prove from the task directory alo
 
 from __future__ import annotations
 
-import io
 import json
 import os
 import tarfile

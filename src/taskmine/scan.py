@@ -48,6 +48,7 @@ class Candidate:
     subject: str
     date: str
     profile: str | None = None
+    title: str | None = None  # the pull request title from a merge commit's body, when there is no GitHub metadata
     run_files: list[str] = field(default_factory=list)
     test_files: list[str] = field(default_factory=list)  # test side, added or modified (restored)
     test_deleted: list[str] = field(default_factory=list)  # test side, deleted by the change
@@ -62,6 +63,18 @@ class Candidate:
     @staticmethod
     def from_json(d: dict) -> "Candidate":
         return Candidate(**d)
+
+
+_GITHUB_MERGE = re.compile(r"^Merge pull request #\d+ from \S+$")
+
+
+def _merge_title(subject: str, body: str) -> str | None:
+    """GitHub's merge commit says only "Merge pull request #N from owner/branch"; the pull request's
+    title is the first line of its body. The same title GitHub metadata would give, for local clones."""
+    if not _GITHUB_MERGE.match(subject):
+        return None
+    first = next((ln.strip() for ln in body.splitlines() if ln.strip()), "")
+    return first or None
 
 
 def _slug(name: str) -> str:
@@ -92,7 +105,7 @@ def list_units(repo: Repo, cfg: Config) -> tuple[list[Candidate], list[Candidate
         unit = f"pr{pr}" if pr is not None else c.sha[:12]
         cand = Candidate(
             id=f"{slug}-{unit}", unit=unit, pr=pr, base=c.parents[0] if c.parents else "",
-            after=c.sha, subject=c.subject, date=c.date,
+            after=c.sha, subject=c.subject, date=c.date, title=_merge_title(c.subject, c.body),
         )
         if cfg.units_kind == "merges":
             if pr is None:

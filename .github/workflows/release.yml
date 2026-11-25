@@ -1,0 +1,85 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: check and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
+        with:
+          python-version: "3.12"
+      - name: The tag is v + the package version
+        run: python scripts/release.py check-tag "$GITHUB_REF_NAME"
+      - name: Release notes, from this version's dated CHANGELOG.md section
+        run: python scripts/release.py notes "${GITHUB_REF_NAME#v}" --dated > release-notes.md
+      - run: python -m pip install build==1.6.1
+      - name: Build the sdist and the wheel
+        run: python -m build
+      - name: The wheel and the sdist carry every package file
+        run: python scripts/release.py check-dist dist
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: release-notes
+          path: release-notes.md
+          if-no-files-found: error
+
+  github-release:
+    name: GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write  # create the release and upload its files
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: dist
+          path: dist
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: release-notes
+          path: .
+      - name: Create the release with the notes and the built files
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: gh release create "$TAG" dist/* --verify-tag --title "taskmine ${TAG#v}" --notes-file release-notes.md
+
+  pypi:
+    name: PyPI (trusted publishing)
+    # Off while the repository is private. When it is public: add a trusted publisher on PyPI for
+    # this repository, workflow release.yml and environment pypi, create that environment here
+    # (Settings > Environments), then delete the `if: false` line. No token is stored anywhere:
+    # the job proves its identity to PyPI with a short-lived OIDC token.
+    if: false
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment:
+      name: pypi
+      url: https://pypi.org/p/taskmine
+    permissions:
+      id-token: write  # OIDC for trusted publishing
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: dist
+          path: dist
+      - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086  # v1.14.3

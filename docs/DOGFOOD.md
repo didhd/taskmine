@@ -11,7 +11,7 @@ this repository (it contains the monorepo's source); only aggregate numbers are 
   `foxl/tests` (`tsx --test`, 76), `packages/code` (`node --test`, 9).
 - **Harbor 0.27.0** over all 173: the `oracle` agent scored 1.0 on 173 of 173 trials and the `nop`
   agent 0.0 on 173 of 173, with 0 exceptions.
-- **Harbor 0.22.0** (the version eval-harvester pins) over 12 of them: `oracle` 12 of 12 at 1.0,
+- **Harbor 0.22.0** (an older release) over 12 of them: `oracle` 12 of 12 at 1.0,
   `nop` 12 of 12 at 0.0.
 - **`taskmine check`**: 173 of 173 pass, on the box and again on the copy moved to the workstation.
 - **Reproducibility**: the box built every draft from a filtered, shallow transfer clone. Ten tasks
@@ -115,3 +115,105 @@ taskmine check    out/tasks
 harbor run -y -p out/tasks -a oracle -n 16 --no-delete
 harbor run -y -p out/tasks -a nop -n 16
 ```
+
+## Agents on the demo set (2026-11-24, second run)
+
+The demo used the everyday commands end to end:
+- On the laptop: `login`, `init`, `agents add`, and `mine --limit 120` (49 drafts).
+- On a Docker host: `verify`, which accepted 12 of the 49 and passed 12 of 12 static checks.
+- Then `bench --tasks 8 -n 8`, with both agents running in parallel through `taskmine gateway`.
+
+| agent | model (Bedrock) | solved | errors | cost | tokens in / out |
+|---|---|---:|---:|---:|---|
+| claude-code | us.anthropic.claude-sonnet-5-5 | 4 / 8 | 0 | $1.38 | 3.10 M / 35 K |
+| codex | us.openai.gpt-6.1-terra | 4 / 8 | 0 | $1.89 | 18.3 M / 68 K |
+
+- Both agents solved the same four tasks and failed the same four.
+- No credential entered a task container:
+  - The gateway signed Claude Code's Bedrock calls on the host.
+  - It served Codex through LiteLLM, which translated to Bedrock Converse.
+  - The containers could not reach the instance metadata endpoint (`iptables -I DOCKER-USER -d 169.254.169.254 -j DROP`).
+- A one-task smoke run before the demo also failed both agents on the same task. Each passed 10 of
+  11 required tests, and both failed the same test.
+
+## Four agents on AgentCore Runtime (2026-11-24)
+
+Setup:
+- Everything ran from a laptop with no Docker. `taskmine agentcore setup` bootstrapped `us-east-1`
+  (prefix `evals-tm-`).
+- `bench` built one image per task on CodeBuild: 150 to 253 s each, 6 at a time.
+- Each trial ran in its own AgentCore session.
+- The tasks were 8 tasks of this dataset (seed 0). The same images served the V1 and the V2 runs.
+
+Sanity, before any model ran: oracle 1.0 and nop 0.0 on one task, with grading in the session's
+no-network phase.
+
+**V1** (the default):
+
+| agent | model | solved | errors | cost |
+|---|---|---:|---:|---:|
+| claude-code | us.anthropic.claude-sonnet-5-5 | 3 / 8 | 0 | $3.67 |
+| opencode | us.anthropic.claude-sonnet-5-5 | 3 / 8 | 0 | $8.76 |
+| strands | us.anthropic.claude-sonnet-5-5 | 3 / 8 | 4 | - |
+| codex | us.openai.gpt-6.1-terra (bedrock-mantle) | 2 / 8 | 0 | - |
+
+**V2:**
+
+| agent | model | solved | errors | cost |
+|---|---|---:|---:|---:|
+| claude-code | us.anthropic.claude-sonnet-5-5 | 3 / 8 | 0 | $3.28 |
+| codex | us.openai.gpt-6.1-terra (bedrock-mantle) | 3 / 8 | 0 | - |
+| opencode | us.anthropic.claude-sonnet-5-5 | 3 / 8 | 0 | $7.02 |
+| strands | us.anthropic.claude-sonnet-5-5 | 3 / 8 | 1 | - |
+
+Notes:
+- Every agent that solved anything solved `pr5128` and `pr5462`. Codex on V1 was the only one to
+  miss `pr5861`.
+- Harbor reports no cost for Codex and Strands on Bedrock, so those cells are empty.
+- The Strands errors were taskmine's to fix:
+  - On V1, 4 trials stopped with `MaxTokensReachedException`. Strands' default output limit is
+    now raised to 32,000.
+  - On V2, 1 trial was cut by AgentCore after 15 minutes without output. The Strands runner
+    prints nothing, so taskmine's agent now prints a line a minute.
+- Before those fixes, OpenCode and Strands had also run on GPT-6.1 Terra: 0 of 8, 8 errors each.
+  - OpenCode: Bedrock Converse refused Terra in this account with
+    `data retention mode 'none' is not available for this model`. A plain one-message Converse
+    call with the scoped agent credentials got the same answer.
+  - Strands: Harbor ships no default Strands factory.
+
+**V1 against V2, unpaired** (p50 / p90 seconds; 32 trials each). This comparison is not paired:
+- V2 ran all 4 agents at once (16 sessions) on runtimes created minutes before, so these were
+  their first, slowest sessions.
+- V1 ran in three smaller batches.
+
+The paired verify measurement in AGENTS.md ("Decisions and why") replaces it for the platform
+decision.
+
+| | session first call | environment setup | agent run | grading | trial |
+|---|---|---|---|---|---|
+| V1 | 1.0 / 1.9 | 3.6 / 4.4 | 132 / 312 | 12 / 23 | 165 / 397 |
+| V2 | 7.8 / 9.0 | 10.8 / 11.4 | 239 / 443 | 18 / 34 | 301 / 593 |
+
+**`verify` on AgentCore.**
+- A new draft (`pr8572`) was mined and validated there: accepted with fail-to-pass 2 and
+  pass-to-pass 6, the same verdict the Docker host had given.
+- Its 8 runs took 69 to 79 s each on V1.
+- On V2 they took 166 to 217 s, and 125 to 139 s with the disk-only hook. Both were measured on a
+  freshly created runtime (cold).
+- In the later paired measurement, the RAM-tuned V2 ran its tests in 70 to 75 s. It still set up
+  about 3 s slower per run and finished 8-10% later.
+- Running the repeat runs at once took the draft from about 830 s to 501 s.
+- AGENTS.md ("Decisions and why") has the tables and the reasons V1 stays the default.
+
+## A Python repository
+
+A small synthetic repository: a package, pytest tests and two `--no-ff` merges. One merge adds a
+function and its tests; the other changes behaviour and adds a test beside an existing one. It went
+through the same `scan`, `build`, `validate`, `finalize` and `check`, with a `pytest` profile on
+`python:3.12-bookworm`:
+- Both drafts were accepted, with fail-to-pass 2 and 1 and pass-to-pass 0 and 1.
+- `check` passed 2 of 2.
+- Harbor 0.27.0 gave oracle 1.0 and nop 0.0 on both tasks.
+
+pytest writes the file path into its JUnit report only with `-o junit_family=xunit1`; the starter
+recipe sets it.

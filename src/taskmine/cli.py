@@ -24,11 +24,22 @@ import sys
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
+from taskmine import __version__
 from taskmine import config as config_mod
 from taskmine import emit, forge, report, scan, validate
 from taskmine.check import check_task
 from taskmine.scan import REFUSALS, Candidate
 from taskmine.vcs import Repo
+
+
+def _rel(p) -> str:
+    """A path as the person typed it: relative to the working directory when it is inside it."""
+    import os
+    try:
+        r = os.path.relpath(p)
+        return str(p) if r.startswith("..") else r
+    except ValueError:
+        return str(p)
 
 
 def _cands(out: Path) -> list[Candidate]:
@@ -56,14 +67,14 @@ def cmd_scan(a) -> int:
     for c in cands:
         if c.refusal:
             counts[c.refusal] = counts.get(c.refusal, 0) + 1
-    print(f"{len(cands)} change units, {len(ok)} candidates -> {out / 'candidates.jsonl'}")
+    print(f"{len(cands)} change units, {len(ok)} candidates -> {_rel(out / 'candidates.jsonl')}")
     by_prof: dict[str, int] = {}
     for c in ok:
         by_prof[c.profile] = by_prof.get(c.profile, 0) + 1
     for k, v in sorted(by_prof.items(), key=lambda x: -x[1]):
         print(f"  candidate  {v:5}  profile {k}")
     for k, v in sorted(counts.items(), key=lambda x: -x[1]):
-        print(f"  left out   {v:5}  {k}: {REFUSALS[k]}")
+        print(f"  left out   {v:5}  {k}" + ("" if a.brief else f": {REFUSALS[k]}"))
     return 0
 
 
@@ -81,7 +92,8 @@ def cmd_meta(a) -> int:
     for c in todo:
         if c.pr in got:
             (meta_dir / f"{c.id}.json").write_text(json.dumps(got[c.pr], indent=1, sort_keys=True) + "\n")
-    print(f"metadata for {len(got)} of {len(todo)} pull requests -> {meta_dir}")
+    issues = sum(len(v.get("issues") or []) for v in got.values())
+    print(f"metadata for {len(got)} of {len(todo)} pull requests ({issues} closing issues) -> {_rel(meta_dir)}")
     return 0
 
 
@@ -118,7 +130,7 @@ def cmd_build(a) -> int:
     with open(out / "build-refusals.jsonl", "a" if a.ids else "w") as f:
         for r in refused:
             f.write(json.dumps(r) + "\n")
-    print(f"{len(cands) - len(refused)} drafts in {out / 'drafts'}, {len(refused)} refused")
+    print(f"{len(cands) - len(refused)} drafts in {_rel(out / 'drafts')}, {len(refused)} refused")
     return 0
 
 
@@ -143,11 +155,14 @@ def cmd_validate(a) -> int:
     drafts = [g[i] for i in range(width) for g in order if i < len(g)]
     if a.executor == "docker":
         ex = validate.DockerExecutor(a.docker)
+    elif a.executor == "agentcore":
+        from taskmine import agentcore
+        ex = agentcore.AgentCoreExecutor(Path(".taskmine"), getattr(a, "platform", "V1"))
     else:
         ex = validate.LocalExecutor(Path(a.scratch or (out / "scratch")))
     res = validate.validate_all(cfg, drafts, ex, a.jobs, a.base_runs, a.gold_runs, a.keep_images, out / "validation")
     acc = sum(1 for r in res if r["verdict"] == "accepted")
-    print(f"{acc} of {len(res)} drafts accepted; summaries in {out / 'validation'}")
+    print(f"{acc} of {len(res)} drafts accepted; summaries in {_rel(out / 'validation')}")
     return 0
 
 
@@ -175,7 +190,7 @@ def cmd_finalize(a) -> int:
     with open(out / "finalize.jsonl", "w") as f:
         for r in rows:
             f.write(json.dumps(r) + "\n")
-    print(f"{sum(1 for r in rows if r['status'] == 'task')} tasks in {tasks}")
+    print(f"{sum(1 for r in rows if r['status'] == 'task')} tasks in {_rel(tasks)}")
     return 0
 
 
@@ -207,7 +222,11 @@ def cmd_report(a) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="taskmine", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--version", action="version", version=f"taskmine {__version__}")
     sub = ap.add_subparsers(dest="cmd", required=True)
+
+    from taskmine import workflow
+    workflow.register(sub)
 
     def common(p, repo=False):
         p.add_argument("--recipe", required=True, help="the repository recipe, taskmine.toml")
@@ -218,6 +237,7 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("scan", help="list change units and candidates")
     common(p, repo=True)
     p.add_argument("--limit", type=int, help="only the newest N change units")
+    p.add_argument("--brief", action="store_true", help="refusal codes only, without their explanations")
     p.set_defaults(fn=cmd_scan)
 
     p = sub.add_parser("meta", help="fetch pull request titles and closing issues from GitHub")
@@ -235,7 +255,8 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("validate", help="execute drafts and decide fail-to-pass / pass-to-pass")
     common(p)
     p.add_argument("--ids", nargs="*")
-    p.add_argument("--executor", choices=["docker", "local"], default="docker")
+    p.add_argument("--executor", choices=["docker", "agentcore", "local"], default="docker")
+    p.add_argument("--platform", choices=["V1", "V2"], default="V1", help="agentcore executor: platform version")
     p.add_argument("--docker", default="docker")
     p.add_argument("--scratch", help="local executor scratch directory")
     p.add_argument("--jobs", type=int, default=4)
@@ -264,6 +285,13 @@ def main(argv: list[str] | None = None) -> int:
     except config_mod.ConfigError as e:
         print(f"recipe error: {e}", file=sys.stderr)
         return 2
+    except Exception as e:  # the everyday commands' own errors read as one line
+        from taskmine.agents import AgentError
+        from taskmine.project import ProjectError
+        if isinstance(e, (AgentError, ProjectError)):
+            print(f"taskmine: {e}", file=sys.stderr)
+            return 2
+        raise
 
 
 if __name__ == "__main__":
