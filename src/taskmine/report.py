@@ -37,7 +37,6 @@ def build(out: Path) -> tuple[str, dict]:
     fpath = out / "finalize.jsonl"
     if fpath.exists():
         fin = [json.loads(l) for l in fpath.read_text().splitlines() if l.strip()]
-    done = [f for f in fin if f.get("status") == "task"]
     fin_ref = Counter(f.get("code") for f in fin if f.get("status") != "task")
 
     tasks = []

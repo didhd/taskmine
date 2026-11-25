@@ -24,6 +24,7 @@ import sys
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
+from taskmine import __version__
 from taskmine import config as config_mod
 from taskmine import emit, forge, report, scan, validate
 from taskmine.check import check_task
@@ -221,6 +222,7 @@ def cmd_report(a) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="taskmine", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--version", action="version", version=f"taskmine {__version__}")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     from taskmine import workflow
