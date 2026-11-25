@@ -11,6 +11,8 @@ would put files into every task, and the person would only find out from a leak 
 
 from __future__ import annotations
 
+import datetime
+import re
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -114,6 +116,42 @@ def _check_keys(where: str, got: dict, allowed: set[str]) -> None:
         raise ConfigError(f"{where}: unknown key(s) {', '.join(unknown)}; allowed: {', '.join(sorted(allowed))}")
 
 
+_KIND_NAMES = {str: "a string", int: "an integer", float: "a number", bool: "true or false",
+               list: "a list of strings", dict: "a table"}
+
+
+def _get(where: str, d: dict, key: str, default, kind: type):
+    """`d[key]` if it has the expected TOML type, else a ConfigError naming the key.
+
+    Read with Python's own conversions instead, a string where a list belongs becomes a list of
+    one-character globs (`run = "tests/*.py"` matches every top-level file) and `"no"` is true.
+    """
+    if key not in d:
+        return default
+    v = d[key]
+    if kind is float and isinstance(v, int) and not isinstance(v, bool):
+        return float(v)
+    if kind is str and key == "since" and isinstance(v, (datetime.date, datetime.datetime)):
+        return v.isoformat()  # an unquoted TOML date
+    ok = isinstance(v, kind) and not (kind in (int, float) and isinstance(v, bool))
+    if ok and kind is list:
+        ok = all(isinstance(x, str) for x in v)
+    if not ok:
+        raise ConfigError(f"{where}: {key} must be {_KIND_NAMES[kind]}, not {v!r}")
+    return v
+
+
+def _patterns(where: str, patterns: list[str]) -> list[str]:
+    for pat in patterns:
+        try:
+            rx = re.compile(pat)
+        except re.error as e:
+            raise ConfigError(f"{where}: pr_patterns {pat!r} is not a regular expression: {e}") from e
+        if rx.groups < 1:
+            raise ConfigError(f"{where}: pr_patterns {pat!r} needs a group that captures the pull request number")
+    return patterns
+
+
 def load(path: str | Path) -> Config:
     path = Path(path)
     try:
@@ -123,7 +161,12 @@ def load(path: str | Path) -> Config:
     _check_keys(str(path), data, set(_SECTIONS))
     for sec, keys in _SECTIONS.items():
         if keys is not None and sec in data:
+            if not isinstance(data[sec], dict):
+                raise ConfigError(f"{path}: [{sec}] must be a table")
             _check_keys(f"{path} [{sec}]", data[sec], keys)
+    raw_profiles = data.get("profiles", [])
+    if not isinstance(raw_profiles, list) or not all(isinstance(p, dict) for p in raw_profiles):
+        raise ConfigError(f"{path}: profiles must be [[profiles]] entries (an array of tables)")
 
     repo = data.get("repo", {})
     units = data.get("units", {})
@@ -136,14 +179,20 @@ def load(path: str | Path) -> Config:
     kind = units.get("kind", "merges")
     if kind not in ("merges", "commits"):
         raise ConfigError(f"{path}: [units] kind must be 'merges' or 'commits', not {kind!r}")
+    w = {sec: f"{path} [{sec}]" for sec in _SECTIONS}
+    github = _get(w["repo"], repo, "github", None, str)
+    if github is not None and github.count("/") != 1:
+        raise ConfigError(f"{w['repo']}: github must be owner/name, not {github!r}")
 
     profiles = []
-    for i, p in enumerate(data.get("profiles", [])):
-        _check_keys(f"{path} [[profiles]] #{i + 1}", p, _PROFILE_KEYS)
+    for i, p in enumerate(raw_profiles):
+        where = f"{path} [[profiles]] #{i + 1}"
+        _check_keys(where, p, _PROFILE_KEYS)
         for req in ("name", "run", "image", "command"):
             if req not in p:
-                raise ConfigError(f"{path} [[profiles]] #{i + 1}: {req!r} is required")
-        if "{files}" not in p["command"] or "{junit}" not in p["command"]:
+                raise ConfigError(f"{where}: {req!r} is required")
+        command = _get(where, p, "command", None, str)
+        if "{files}" not in command or "{junit}" not in command:
             raise ConfigError(
                 f"{path} profile {p['name']!r}: command must contain {{files}} (the test files to run) "
                 "and {junit} (where the runner writes its JUnit XML report)"
@@ -153,22 +202,23 @@ def load(path: str | Path) -> Config:
         norm = p.get("deps_normalize")
         if norm not in (None, "npm"):
             raise ConfigError(f"{path} profile {p['name']!r}: deps_normalize must be 'npm' or absent")
+        env = _get(where, p, "env", {}, dict)
         profiles.append(
             Profile(
-                name=p["name"],
-                run=GlobSet(p["run"]),
-                image=p["image"],
-                workdir=p.get("workdir", "."),
-                command=p["command"],
-                display_command=p.get("display_command", p["command"]),
-                install=p.get("install"),
-                deps=list(p.get("deps", [])),
+                name=_get(where, p, "name", None, str),
+                run=GlobSet(_get(where, p, "run", None, list)),
+                image=_get(where, p, "image", None, str),
+                workdir=_get(where, p, "workdir", ".", str),
+                command=command,
+                display_command=_get(where, p, "display_command", command, str),
+                install=_get(where, p, "install", None, str),
+                deps=list(_get(where, p, "deps", [], list)),
                 deps_normalize=norm,
-                timeout_sec=float(p.get("timeout_sec", 900)),
-                cpus=int(p.get("cpus", 2)),
-                memory_mb=int(p.get("memory_mb", 4096)),
-                env={str(k): str(v) for k, v in p.get("env", {}).items()},
-                setup=p.get("setup"),
+                timeout_sec=_get(where, p, "timeout_sec", 900.0, float),
+                cpus=_get(where, p, "cpus", 2, int),
+                memory_mb=_get(where, p, "memory_mb", 4096, int),
+                env={str(k): str(v) for k, v in env.items()},
+                setup=_get(where, p, "setup", None, str),
                 text_probe=p.get("text_probe", "static"),
             )
         )
@@ -177,27 +227,27 @@ def load(path: str | Path) -> Config:
 
     return Config(
         path=path,
-        repo_name=repo["name"],
-        github=repo.get("github"),
+        repo_name=_get(w["repo"], repo, "name", None, str),
+        github=github,
         units_kind=kind,
-        branch=units.get("branch", "main"),
-        since=units.get("since"),
-        pr_patterns=list(
-            units.get("pr_patterns", [r"^Merge pull request #(\d+) from ", r"\(#(\d+)\)$"])
-        ),
-        max_file_bytes=int(snap.get("max_file_bytes", 5_000_000)),
-        snapshot_exclude=GlobSet(snap.get("exclude", [])),
-        binary_ext=frozenset(e.lower() for e in snap.get("binary_ext", DEFAULT_BINARY_EXT)),
-        tests=GlobSet(tests.get("paths", DEFAULT_TEST_PATHS)),
-        docs=GlobSet(tests.get("docs", DEFAULT_DOC_PATHS)),
-        max_gold_files=int(limits.get("max_gold_files", 40)),
-        max_gold_lines=int(limits.get("max_gold_lines", 2000)),
-        max_run_files=int(limits.get("max_run_files", 6)),
-        max_changed_file_bytes=int(limits.get("max_changed_file_bytes", 20_000_000)),
+        branch=_get(w["units"], units, "branch", "main", str),
+        since=_get(w["units"], units, "since", None, str),
+        pr_patterns=_patterns(w["units"], list(
+            _get(w["units"], units, "pr_patterns", [r"^Merge pull request #(\d+) from ", r"\(#(\d+)\)$"], list)
+        )),
+        max_file_bytes=_get(w["snapshot"], snap, "max_file_bytes", 5_000_000, int),
+        snapshot_exclude=GlobSet(_get(w["snapshot"], snap, "exclude", [], list)),
+        binary_ext=frozenset(e.lower() for e in _get(w["snapshot"], snap, "binary_ext", DEFAULT_BINARY_EXT, list)),
+        tests=GlobSet(_get(w["tests"], tests, "paths", DEFAULT_TEST_PATHS, list)),
+        docs=GlobSet(_get(w["tests"], tests, "docs", DEFAULT_DOC_PATHS, list)),
+        max_gold_files=_get(w["limits"], limits, "max_gold_files", 40, int),
+        max_gold_lines=_get(w["limits"], limits, "max_gold_lines", 2000, int),
+        max_run_files=_get(w["limits"], limits, "max_run_files", 6, int),
+        max_changed_file_bytes=_get(w["limits"], limits, "max_changed_file_bytes", 20_000_000, int),
         profiles=profiles,
-        agent_timeout_sec=float(task.get("agent_timeout_sec", 3600)),
-        storage_mb=int(task.get("storage_mb", 20480)),
-        include_issue=bool(task.get("include_issue", True)),
-        allow_source_text=bool(tests.get("allow_source_text", False)),
-        issue_max_chars=int(task.get("issue_max_chars", 4000)),
+        agent_timeout_sec=_get(w["task"], task, "agent_timeout_sec", 3600.0, float),
+        storage_mb=_get(w["task"], task, "storage_mb", 20480, int),
+        include_issue=_get(w["task"], task, "include_issue", True, bool),
+        allow_source_text=_get(w["tests"], tests, "allow_source_text", False, bool),
+        issue_max_chars=_get(w["task"], task, "issue_max_chars", 4000, int),
     )

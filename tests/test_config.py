@@ -119,6 +119,34 @@ class Refusals(TempDir):
         self.refused(REPO + NODE_PROFILE + 'text_probe = "always"\n', "text_probe must be")
         self.refused(REPO + NODE_PROFILE + 'deps_normalize = "yarn"\n', "deps_normalize must be")
 
+    def test_a_string_where_a_list_belongs_is_refused(self):
+        # Read as a list of characters, `run = "test/*.test.mjs"` made `*` a glob of its own: every
+        # top-level file counted as a runnable test.
+        prof = NODE_PROFILE.replace('run = ["test/*.test.mjs"]', 'run = "test/*.test.mjs"')
+        self.refused(REPO + prof, "run must be a list of strings")
+        self.refused(REPO + '[snapshot]\nexclude = "media/**"\n' + NODE_PROFILE, "[snapshot]", "exclude must be a list")
+        self.refused(REPO + '[tests]\npaths = "spec/**"\n' + NODE_PROFILE, "paths must be a list")
+        self.refused(REPO + NODE_PROFILE + 'deps = "package.json"\n', "deps must be a list")
+        self.refused(REPO + '[units]\npr_patterns = "^Merge (\\\\d+)"\n' + NODE_PROFILE, "pr_patterns must be a list")
+
+    def test_wrong_types_are_recipe_errors_not_crashes(self):
+        self.refused("repo = 5\n" + NODE_PROFILE, "[repo] must be a table")
+        self.refused(REPO + '[profiles]\nname = "p"\n', "array of tables")
+        self.refused(REPO + NODE_PROFILE + 'cpus = "two"\n', "cpus must be an integer, not 'two'")
+        self.refused(REPO + NODE_PROFILE + "timeout_sec = true\n", "timeout_sec must be a number")
+        self.refused(REPO + NODE_PROFILE + 'env = ["A=1"]\n', "env must be a table")
+        self.refused(REPO + '[task]\ninclude_issue = "no"\n' + NODE_PROFILE, "include_issue must be true or false")
+        self.refused('[repo]\nname = 5\n' + NODE_PROFILE, "name must be a string")
+        self.refused(REPO + 'github = "shop"\n' + NODE_PROFILE, "github must be owner/name")
+
+    def test_pr_patterns_are_checked_when_the_recipe_loads(self):
+        self.refused(REPO + "[units]\npr_patterns = ['(unclosed']\n" + NODE_PROFILE, "not a regular expression")
+        self.refused(REPO + "[units]\npr_patterns = ['^Merge']\n" + NODE_PROFILE, "needs a group")
+
+    def test_an_unquoted_toml_date_is_accepted_for_since(self):
+        cfg = config.load(recipe(self.tmp, REPO + "[units]\nsince = 2026-06-01\n" + NODE_PROFILE))
+        self.assertEqual(cfg.since, "2026-06-01")
+
     def test_unreadable_or_invalid_toml(self):
         with self.assertRaises(config.ConfigError):
             config.load(self.tmp / "missing.toml")
