@@ -17,6 +17,13 @@ repeated run, and Harbor's do-nothing agent must score 0 while its oracle scores
 - It was recorded with `demo/record.py --live`: every event carries its wall-clock time, each
   command appears when it starts, and the recorder waited 1 s between commands. Nothing was
   shortened, cut or edited, so the recording is as long as the session.
+- The session took 304 s:
+  - `verify` 200 s: four images built on CodeBuild, then 5 drafts validated; 4 accepted, and the
+    source-text-only one rejected;
+  - `bench` 69 s: four agents solved 4 of 4 each.
+
+  The tasks are small, so solving them says little about the agents. The dogfood numbers below
+  do.
 
 ## Quick start
 
