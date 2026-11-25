@@ -89,3 +89,13 @@ class StillExact(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Python37(unittest.TestCase):
+    def test_the_grader_uses_nothing_newer_than_python_3_7(self):
+        # It runs on whatever python3 a task image has. str.removeprefix (3.9) once slipped in.
+        import ast
+        src = (ROOT / "src" / "taskmine" / "templates" / "grader.py").read_text()
+        ast.parse(src, feature_version=(3, 7))
+        for newer in (".removeprefix(", ".removesuffix(", "math.prod(", "functools.cache("):
+            self.assertNotIn(newer, src)

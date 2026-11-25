@@ -179,7 +179,9 @@ def file_for(classname, name, run_files, app, cache, suites=()):
     if not run_files:
         return None
     for named in (classname or "", *suites):
-        named = named.strip().removeprefix("./")
+        named = named.strip()
+        if named.startswith("./"):  # str.removeprefix is Python 3.9; this runs on 3.7
+            named = named[2:]
         if named in run_files:
             return named
     cls = re.split(r"[$+]", classname or "")[0]
