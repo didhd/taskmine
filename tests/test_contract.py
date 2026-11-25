@@ -112,6 +112,19 @@ class SourceTextReads(unittest.TestCase):
         tests = {"t/a.test.mjs": "readFileSync(join(root, 'lib', 'core.mjs'))\n"}
         self.assertEqual(contract.source_text_reads(tests, {"lib/core.mjs"}, "."), {"t/a.test.mjs": ["lib/core.mjs"]})
 
+    def test_importing_a_changed_module_is_not_reading_its_text(self):
+        # Counted as a read, the import made every fail-to-pass test in a file that also reads a
+        # fixture a "source-text" test under the static check, and dropped it.
+        gold = {"lib/cart.mjs", "lib/codes.mjs"}
+        fixture = {"t/a.test.mjs": "import { total } from '../lib/cart.mjs';\n"
+                                   "const cases = JSON.parse(readFileSync(new URL('./cases.json', import.meta.url)));\n"}
+        self.assertEqual(contract.source_text_reads(fixture, gold, "."), {})
+        both = {"t/a.test.mjs": "import { total } from '../lib/cart.mjs';\nconst { CODES } = await import('../lib/codes.mjs');\n"
+                                "const src = readFileSync(new URL('../lib/cart.mjs', import.meta.url), 'utf8');\n"}
+        self.assertEqual(contract.source_text_reads(both, gold, "."), {"t/a.test.mjs": ["lib/cart.mjs"]})
+        cjs = {"t/a.test.js": "const { total } = require('../lib/cart.mjs');\nconst f = fs.readFileSync('x.json');\n"}
+        self.assertEqual(contract.source_text_reads(cjs, gold, "."), {})
+
 
 if __name__ == "__main__":
     unittest.main()
