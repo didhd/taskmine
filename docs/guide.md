@@ -38,9 +38,21 @@ Add the agents you plan to run before `taskmine agentcore setup` so it can scope
 
 `verify` and `bench` default to AgentCore V1. You need AWS credentials with permission to set up the project resources in `us-east-1` and access the chosen models. `taskmine agentcore setup` creates a local Python 3.12 environment with Harbor 0.27.0 and boto3, plus the cloud resources needed to build and run the tasks. It creates IAM roles, a private ECR repository, a private S3 bucket and a CodeBuild project under the `evals-tm-` prefix. `taskmine agentcore resources` lists taskmine resources. When the project is finished, use `taskmine agentcore teardown` to remove the prefixed resources, including runtimes. Review the list first; teardown is scoped by prefix, not by project directory.
 
-The [vendored Harbor environment](../src/taskmine/agentcore/PROVENANCE.md) builds arm64 images on CodeBuild and runs each agent trial and each validation run in a fresh session. `bench` can reuse images built by `verify`. Taskmine's copy of each task configures repository ownership, the network allowlist and the preinstalled harnesses. Base images are pulled via ECR Public. The agent runs unprivileged, can only reach the allowed Bedrock endpoints, and gets short-lived, model-scoped credentials. The grader runs without network access. It is logged as `unsealed`: taskmine does not yet implement the workshop harness's staged grading contract.
+The [vendored Harbor environment](../src/taskmine/agentcore/PROVENANCE.md) builds arm64 images on CodeBuild and runs each agent trial and each validation run in a fresh session. `bench` can reuse images built by `verify`. Taskmine's copy of each task configures repository ownership, the network allowlist and the preinstalled harnesses. Base images are pulled via ECR Public. The agent runs unprivileged, can only reach the allowed Bedrock endpoints, and gets short-lived, model-scoped credentials. The grader runs without network access, in two stages (the workshop harness's `test.sh --stage` contract): the tests run as the agent user on a copy of the repository, then a separate trusted stage, as another user and after every agent process has ended, computes the reward from the test report and the task's own files. Nothing the agent can write becomes the reward, and a trial that cannot be graded this way is reported as an error instead of being graded in one stage. See [where grading runs](#where-grading-runs).
 
 Use Docker for tasks with x86-only dependencies unless you set up an x86_64 AgentCore capacity provider separately. V1 supports images up to about 2 GB compressed, while `--platform V2` supports images up to 10 GB. With `TASKMINE_AC_WARMUP=ram`, V2 puts the repository in its memory snapshot; `TASKMINE_AC_WARMUP=disk` only primes file reads. In two matched runs of one task, V1 took 301 to 307 s and RAM-tuned V2 took 330 s, excluding runtime deployment. See the [measurements and their limits](../AGENTS.md#where-trials-run).
+
+### Where grading runs
+
+| where | how the reward is made | status |
+|---|---|---|
+| `--env agentcore` (`bench`) | staged: `test.sh --stage untrusted` as the agent user, then `--stage trusted` as the grader user; only the trusted stage's `reward.json` counts | supported, the default |
+| `--env agentcore`, a task made before staged grading, or `--ek staged_grader=false` | none: the trial ends in an error | refused on purpose |
+| `--env docker` (`bench`) | one stage, `test.sh` in the agent's container, as Harbor's own verifier runs it; `reward.txt` | supported; `bench` says it is single-stage |
+| plain `harbor run` with another environment | one stage, as above | works; nothing is staged |
+| `verify` (any executor) | one stage, no agent involved: the base and the gold patch only | supported |
+
+The staged grade keeps every file the agent can write out of the score, but the tests still run the agent's code: code planted on the gold side can still write a false test report. The [decision record](../AGENTS.md#where-trials-run) has the details and what each stage reads.
 
 ### Docker
 

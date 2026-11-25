@@ -123,7 +123,9 @@ change for a new test runner that can write JUnit XML.
 4. **An instruction contains no part of the answer.** Pull request bodies are never used, and the
    leak check runs before a task is written.
 5. **A task is published only with the bytes that were validated** (the draft digest).
-6. **The grader fails closed**: the reward is 0 until every required test has passed.
+6. **The grader fails closed**: the reward is 0 until every required test has passed. On AgentCore
+   the reward comes only from the trusted grading stage, and a trial that cannot be graded in
+   stages is not graded at all.
 
 ## Releases
 
@@ -318,14 +320,44 @@ surface was compared before switching:
 
 The smoke run (oracle 1.0, nop 0.0) and the bench ran on 0.27.0.
 
-**Grading is "unsealed" on AgentCore for now.**
-- PR #120 seals grading only for a `test.sh` that supports `--stage untrusted|trusted`.
-  taskmine's does not yet, so the test run happens in the trial's own session as the agent user.
-  That is the same trust level as Harbor on a Docker host, where the verifier runs in the agent's
-  container.
-- The grader still restores test-side files first, and runs with no network.
-- Next step: a staged `test.sh`, whose untrusted stage runs the tests and whose trusted stage
-  reads JUnit and writes the reward.
+**Grading on AgentCore is staged, PR #120's way, or it does not happen.**
+- The contract is PR #120's `test.sh --stage untrusted|trusted`, checked against its head
+  (`37e3f93`, which adds bytecode removal, a nested-`.git` refusal and a keepalive on the
+  environment's side; the stages, paths and reward file are the same as in the vendored
+  `09dd8c7`):
+  - the environment computes the agent's patch as root, runs `--stage untrusted` as uid agent with
+    `OUT`, kills every agent process, refuses to grade if the patch changed, copies `OUT`'s regular
+    files (never a `reward*` name) into a root-owned `IN`, runs `--stage trusted` as uid grader with
+    `IN` and a grader-owned `OUT`, and lets only that `OUT/reward.json` reach Harbor.
+  - The repository must be at `/work/repo` with its `.git`: PR #120's layer keeps a root-only copy
+    of it and records the tree as built. So the AgentCore copy of a task puts the repository at
+    `/work/repo` and makes `/app` a root-owned link to it, before anything is written there (no
+    extra copy of the repository in the image), and writes the base commit to
+    `/var/lib/task_base_ref`.
+- The untrusted stage runs the tests on a copy of the repository. The environment compares the
+  patch over every file in `/work/repo` (`git add -A --force`), so a test run that writes a cache,
+  build output or a restored test file into the repository would make every trial ungraded. Cost:
+  one copy of the repository per trial (`cp -a`).
+- The trusted stage never takes a result from `IN`: not a reward, grade or status file, not the
+  run's exit code. It computes the reward from `/tests` (spec, `expected.json`, the hidden test
+  files, all root-owned) and the JUnit report. It resets `PATH`, runs a root-owned python3 that is
+  not writable by group or others and not under `/app`, `/work`, `/home`, `/tmp` or `/logs`, with
+  `-I -S`, from `/tests`. A report with a DTD, or over 20 MB, scores 0; a required test that the
+  report holds twice passes only if both copies passed.
+- `as-grader` finds `bash` through the image's `PATH`, so a `PATH` folder the agent can write would
+  let it plant the program the trusted stage runs. The official ruby image's `GEM_HOME` is mode
+  1777 and on `PATH`. The AgentCore image build therefore removes group and world write from such
+  folders and their files, and fails if a `PATH` entry is inside `/app`, `/work`, `/home`, `/tmp`
+  or `/logs`.
+- Where PR #120 would fall back to grading unsealed (`staged_grader=false`, a `test.sh` without
+  `--stage`, an image without the grader user or the baseline), `TaskmineAgentCoreEnvironment`
+  refuses instead: the trial is an error, not a score.
+- What staging does not stop, as PR #120 says of its own ("Not sealed: junit.xml ... come from the
+  untrusted stage"): the tests run the agent's code, so code the agent planted on the gold side can
+  write a false report. Staging keeps every reward file the agent could write out of the score, and
+  makes the trusted stage's own code and inputs unreachable from the agent.
+- Validation (`verify`) still runs `test.sh` in one stage: no agent has run in those sessions, the
+  gold patch is the task's own, and validation reads test statuses, not a reward an agent made.
 
 **Images are built before any agent starts.**
 - PR #120 locks a build per image within one process. `bench` runs one Harbor process per agent,

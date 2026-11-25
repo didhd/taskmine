@@ -314,6 +314,11 @@ def cmd_bench(a) -> int:
         return 1
     where = f"AgentCore Runtime ({a.platform}, arm64)" if a.env == "agentcore" else "Docker"
     ok(f"bench {c('1', a.run)}: {len(chosen)} agents x {n} tasks on {where}, {a.concurrency} at a time per agent")
+    if a.env == "docker":
+        info("grading: in one stage, in the agent's container (Harbor's own verifier). Staged grading, where the score "
+             "comes from a separate trusted stage, needs --env agentcore")
+    else:
+        info("grading: staged (PR #120): tests as the agent user, then the score from a trusted stage as the grader user")
     if a.env == "agentcore":
         from taskmine import agentcore as ac
         ac.check_agents(chosen)
