@@ -296,7 +296,9 @@ def add_missing(statuses, run_files):
 def worst(statuses, ident):
     """A test id that the report holds more than once (`id`, `id #2`, ...) passes only if every copy passed."""
     copies = [v for k, v in statuses.items() if k == ident or (k.startswith(ident + " #") and k[len(ident) + 2:].isdigit())]
-    return "passed" if copies and all(v == "passed" for v in copies) else (copies[0] if copies else None)
+    if not copies:
+        return None
+    return "passed" if all(v == "passed" for v in copies) else "failed"
 
 
 def grade(statuses, expected):

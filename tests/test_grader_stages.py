@@ -172,7 +172,8 @@ class Stages(TempDir):
     def test_a_forged_passing_duplicate_does_not_pass_a_failing_test(self):
         inp = self.root_copy(self.untrusted())
         junit = (inp / "junit.xml").read_text()
-        forged = junit.replace("</testsuites>", '<testcase classname="t" name="test_mul" file="tests/test_calc.py"/></testsuites>')
+        # The forged passing copy comes first, so it takes the plain id and the real failing one becomes "#2".
+        forged = junit.replace("<testsuites>", '<testsuites><testcase classname="t" name="test_mul" file="tests/test_calc.py"/>', 1)
         (inp / "junit.xml").write_text(forged)
         reward, out, p = self.trusted(inp)
         self.assertEqual(reward, {"reward": 0.0}, p.stdout + p.stderr)
