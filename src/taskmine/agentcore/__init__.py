@@ -48,6 +48,12 @@ VARIANT = f"""
 # The agent runs as uid 2000 (PR #120's layer below creates that user) and must own the repository.
 USER root
 RUN chown -R 2000:2000 /app
+# A session's /etc/hosts is empty and read-only, and the agent's namespace has no DNS, so `localhost`
+# would not resolve (vitest, and every test that starts a local server, fail). glibc's myhostname
+# module answers localhost with 127.0.0.1 and ::1 without either.
+RUN if command -v apt-get >/dev/null; then ls /lib/*/libnss_myhostname.so.2 >/dev/null 2>&1 \\
+      || (apt-get update && apt-get install -y --no-install-recommends libnss-myhostname && rm -rf /var/lib/apt/lists/*); fi \\
+ && sed -i 's/^hosts:.*/hosts:          files myhostname dns/' /etc/nsswitch.conf
 # Harnesses are baked in: at trial time the agent's network reaches only Bedrock.
 RUN command -v npm >/dev/null 2>&1 || (apt-get update && apt-get install -y --no-install-recommends nodejs npm \\
  && rm -rf /var/lib/apt/lists/*)
@@ -55,8 +61,10 @@ RUN npm install -g {CLAUDE_CODE} {CODEX} && npm cache clean --force && rm -rf /r
  && claude --version && codex --version
 # Strands Agents, in the venv that Harbor's strands runner uses.
 COPY --from=ghcr.io/astral-sh/uv:0.13.0 /uv /usr/local/bin/uv
-RUN UV_PYTHON_INSTALL_DIR=/opt/uv-python uv venv -q --python 3.12 /installed-agent/strands/venv \\
- && uv pip install -q --python /installed-agent/strands/venv/bin/python {STRANDS} && rm -rf /root/.cache/uv \\
+# uv uses the image's own Python 3.12 when it has one, and installs one in /opt/uv-python when not.
+# Bytecode is compiled now, so the runner's imports don't compile in every session.
+RUN mkdir -p /opt/uv-python && UV_PYTHON_INSTALL_DIR=/opt/uv-python uv venv -q --python 3.12 /installed-agent/strands/venv \\
+ && UV_COMPILE_BYTECODE=1 uv pip install -q --python /installed-agent/strands/venv/bin/python {STRANDS} && rm -rf /root/.cache/uv \\
  && chown -R 2000:2000 /installed-agent/strands && chmod -R a+rX /opt/uv-python
 """
 
