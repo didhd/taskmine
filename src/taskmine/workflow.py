@@ -85,10 +85,20 @@ def tilde(p) -> str:
     return "~" + s[len(h):] if s.startswith(h) else s
 
 
+def _shown(path: Path) -> str:
+    """A path as a person reads it: relative under the current directory, else with ~ for home."""
+    try:
+        return str(path.relative_to(Path.cwd().resolve())) or "."
+    except ValueError:
+        return tilde(path)
+
+
 def cmd_init(a) -> int:
+    # GitHub is needed to clone and to read pull request metadata; a local clone with a recipe that
+    # names no GitHub repository needs neither.
     user = project_mod.gh_user()
-    if user is None:
-        print("not signed in to GitHub: run `taskmine login`")
+    if user is None and not a.clone:
+        print("not signed in to GitHub: run `taskmine login` (or point at a local clone with --clone)")
         return 1
     root = project_mod.HOME
     clone = Path(a.clone).resolve() if a.clone else (root / "repo").resolve()
@@ -107,14 +117,17 @@ def cmd_init(a) -> int:
     elif not recipe.exists():
         recipe.write_text(_starter_recipe(a.repo, clone))
     cfg = config_mod.load(recipe)
+    if cfg.github and user is None:
+        print(f"the recipe reads pull requests of {cfg.github} from GitHub: run `taskmine login`")
+        return 1
     proj = project_mod.Project(root, a.repo, clone, recipe.resolve(), (root / "out").resolve())
     if (root / "agents.toml").exists():
         proj.agents = project_mod.load(root).agents if (root / "project.toml").exists() else []
     project_mod.save(proj)
     merges = subprocess.run(["git", "-C", str(clone), "rev-list", "--merges", "--count", cfg.branch],
                             capture_output=True, text=True).stdout.strip()
-    ok(f"project {c('1', a.repo)} (GitHub account {user})")
-    info(f"clone    {tilde(clone)}  ({merges} merge commits on {cfg.branch})")
+    ok(f"project {c('1', a.repo)}" + (f" (GitHub account {user})" if cfg.github or not a.clone else " (local clone)"))
+    info(f"clone    {_shown(clone)}  ({merges} merge commits on {cfg.branch})")
     info(f"recipe   {recipe}  ({len(cfg.profiles)} test runner profiles: {', '.join(p.name for p in cfg.profiles)})")
     info(f"dataset  {os.path.relpath(proj.out)}")
     return 0

@@ -105,7 +105,7 @@ class LocalExecutor:
     name = "local"
 
     def __init__(self, scratch: Path):
-        self.scratch = scratch
+        self.scratch = Path(scratch).resolve()  # the probe and the grader run from inside the app dir
 
     def build(self, ctx: Path, tag: str, log: Path, timeout: float) -> bool:
         template = self.scratch / tag.replace("/", "_").replace(":", "_") / "app"
@@ -253,7 +253,9 @@ def validate_one(cfg: Config, draft: Path, ex, base_runs: int, gold_runs: int, k
             r = ex.run(tag, draft, with_solution, logs, prof, name, cfg.tests.patterns if probe else None)
             if probe:
                 read = logs / "textprobe.log"
-                r["substituted"] = sorted(set(read.read_text().split())) if read.exists() else []
+                lines = read.read_text().splitlines() if read.exists() else []
+                r["substituted"] = sorted({ln for ln in lines if ln and not ln.startswith("!error ")})
+                r["probe_error"] = next((ln[7:] for ln in lines if ln.startswith("!error ")), None)
             return r
 
         if getattr(ex, "parallel_runs", False) and len(slots) > 1:
@@ -282,6 +284,8 @@ def validate_one(cfg: Config, draft: Path, ex, base_runs: int, gold_runs: int, k
         if prof.text_probe == "node":
             # Gold state, but test code that reads a changed source file gets the base text.
             tp = run("textprobe", True, probe=True)
+            if tp.get("probe_error"):
+                return done("rejected", "text-probe-failed", probe_error=tp["probe_error"], **a)
             text_tests = [t for t in a["fail_to_pass"] if tp["statuses"].get(t) != "passed"]
             a["text_probe_substituted"] = tp.get("substituted", [])
         else:
