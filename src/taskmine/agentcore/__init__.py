@@ -105,7 +105,7 @@ def install_harness(root, codex_model: str | None = None) -> Path:
             out = dest / src.relative_to(HERE / "pr120")
             out.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src, out)
-    for n in ("taskmine_env.py", "taskmine_ac.py"):
+    for n in ("taskmine_env.py", "taskmine_ac.py", "taskmine_warmup.py"):
         shutil.copy2(HERE / n, dest / n)
     if codex_model is None:
         return dest

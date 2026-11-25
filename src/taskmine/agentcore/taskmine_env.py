@@ -2,34 +2,74 @@
 
     harbor run -e taskmine_env:TaskmineAgentCoreEnvironment ...
 
-Runs in the harness venv (Harbor and a boto3 that knows AgentCore). It changes one thing, read from
-the environment, never from a task: TASKMINE_AC_PLATFORM, the AgentCore platform version that new
-runtimes get.
-- V1 is what PR #120 tested: every session pulls the image and starts the container.
+Runs in the harness venv, with Harbor and a boto3 that knows AgentCore. It reads two settings from
+the environment, never from a task.
+
+TASKMINE_AC_PLATFORM is the AgentCore platform version that new runtimes get:
+- V1 is what PR #120 tested. Every session pulls the image and starts the container.
 - V2 starts the container once, when the runtime is created, snapshots the microVM after its first
   healthy /ping, and restores that snapshot for every session. PR #120's shim starts the firewall
-  before it answers /ping, so the firewall is part of the snapshot.
+  before it answers /ping, so the firewall is part of the snapshot. A V2 runtime is named
+  `<V1 name>_v2`, so both can serve the same image side by side.
 
-A V2 runtime is named `<V1 name>_v2`, so both can serve the same image side by side.
+TASKMINE_AC_WARMUP=1 (V2 only) adds a build hook that reads the image files sessions will need
+while the snapshot is built (taskmine_warmup.py). Those images get their own tag, ending in `w`.
 """
 
 from __future__ import annotations
 
 import functools
+import hashlib
 import os
+import shutil
+from pathlib import Path
 
 import p2_v2 as p2
+from harbor_env import agentcore_env as ace
 from harbor_env.agentcore_env import AgentCoreEnvironment
 
 PLATFORM = os.environ.get("TASKMINE_AC_PLATFORM", "V1")
 if PLATFORM not in ("V1", "V2"):
     raise ValueError(f"TASKMINE_AC_PLATFORM must be V1 or V2, not {PLATFORM!r}")
+WARMUP = PLATFORM == "V2" and os.environ.get("TASKMINE_AC_WARMUP", "0") == "1"
+HOOKS = {"build": {"warmup": {"action": {"httpPost": {"path": "/warmup", "port": 9090}}}}}
+WARMUP_FILE = Path(__file__).resolve().parent / "taskmine_warmup.py"
+WARMUP_TAIL = ('\n# ===== taskmine: V2 build hook (taskmine_warmup.py), then PR #120\'s shim =====\n'
+               'COPY taskmine_warmup.py /opt/taskmine/warmup.py\nCMD ["python3", "/opt/taskmine/warmup.py"]\n')
 
-if getattr(p2.deploy, "func", None) is None:  # once per process, even if this module is imported twice
+
+def _with_hooks(call):
+    @functools.wraps(call)
+    def wrapped(**kw):
+        if kw.get("platformVersion") == "V2":
+            kw["hooksConfiguration"] = HOOKS  # an update replaces the hooks, so every call carries them
+        return call(**kw)
+    return wrapped
+
+
+if not getattr(p2, "_taskmine_patched", False):  # once per process, even if this module is imported twice
+    p2._taskmine_patched = True
     p2.deploy = functools.partial(p2.deploy, platform=PLATFORM)
     if PLATFORM == "V2":
         _v1_name = p2.runtime_name
         p2.runtime_name = lambda task: _v1_name(task) + "_v2"
+    if WARMUP:
+        _key, _ctx = ace.image_key, ace.env_dir_context
+        # The hook changes the image, so its tag does too: `w` and a hash of the hook file and the Dockerfile tail.
+        _w = "w" + hashlib.sha256(WARMUP_FILE.read_bytes() + WARMUP_TAIL.encode()).hexdigest()[:2]  # runtime names stop at 48 characters
+        ace.image_key = lambda environment_dir, name, verifier: _key(environment_dir, name, verifier) + _w
+
+        def _context(environment_dir):
+            inner = _ctx(environment_dir)
+
+            def ctx(tag, module, dest: Path):
+                inner(tag, module, dest)
+                shutil.copy2(WARMUP_FILE, dest / WARMUP_FILE.name)
+                (dest / "Dockerfile").write_text((dest / "Dockerfile").read_text() + WARMUP_TAIL)
+            return ctx
+        ace.env_dir_context = _context
+        p2.ctl.create_agent_runtime = _with_hooks(p2.ctl.create_agent_runtime)
+        p2.ctl.update_agent_runtime = _with_hooks(p2.ctl.update_agent_runtime)
 
 
 class TaskmineAgentCoreEnvironment(AgentCoreEnvironment):
