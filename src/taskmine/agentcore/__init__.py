@@ -88,7 +88,7 @@ def ensure_venv(root, log=print) -> Path:
     uv = shutil.which("uv")
     if not uv:
         raise AgentCoreError("the AgentCore harness needs uv to make its Python 3.12 venv: https://docs.astral.sh/uv/")
-    log(f"  making {home(root) / 'venv'} ({HARBOR}, {BOTO3})")
+    log(f"making {home(root) / 'venv'} ({HARBOR}, {BOTO3})")
     for cmd in ([uv, "venv", "-q", "--allow-existing", "--python", "3.12", str(home(root) / "venv")],
                 [uv, "pip", "install", "-q", "--python", str(py), HARBOR, BOTO3]):
         if subprocess.run(cmd).returncode:

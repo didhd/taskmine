@@ -46,8 +46,8 @@ CATALOG: dict[str, Kind] = {
     "goose": Kind("goose", ("anthropic", "openai", "bedrock"), "Goose"),
 }
 
-# Only these pairs have been run end to end; the rest are passed to Harbor as they are.
-VERIFIED = {("claude-code", "bedrock"), ("codex", "bedrock")}
+# Only these pairs have been run end to end (opencode and strands on AgentCore); the rest are passed to Harbor as they are.
+VERIFIED = {("claude-code", "bedrock"), ("codex", "bedrock"), ("opencode", "bedrock"), ("strands", "bedrock")}
 
 # Agents that speak an OpenAI API: on Bedrock they reach the model through the gateway's LiteLLM.
 OPENAI_PROTOCOL = {"codex", "opencode", "strands"}
