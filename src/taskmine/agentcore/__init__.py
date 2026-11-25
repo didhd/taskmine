@@ -349,7 +349,10 @@ def harbor_args(a: dict, root) -> list[str]:
                 "--ak", "opencode_config=" + json.dumps(cfg, separators=(",", ":")), *extra]
     if kind == "strands":
         from taskmine.agents import STRANDS_FACTORY
-        return ["-a", "strands", "-m", f"amazon-bedrock/{model}", *STRANDS_FACTORY, *skip, *region, *extra]
+        # Harbor cannot see the credentials, which exist only inside the session, so the factory builds the Bedrock model.
+        kw = json.dumps({"model": model}, separators=(",", ":"))
+        return ["-a", "strands", "-m", f"amazon-bedrock/{model}", *STRANDS_FACTORY, "--ak", f"factory_kwargs={kw}",
+                *skip, *region, *extra]
     raise AgentCoreError(f"{a['name']}: {kind} is not supported on AgentCore")
 
 

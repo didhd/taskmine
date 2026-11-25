@@ -223,6 +223,8 @@ class ParallelRuns(unittest.TestCase):
     The verdicts and the recorded run order must equal the sequential ones."""
 
     def test_parallel_validation_equals_sequential(self):
+        import sys
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
         import test_end_to_end as e2e
         from taskmine import cli, config, validate
 
