@@ -4,9 +4,9 @@
 
 Taskmine turns your team's merged pull requests into [Harbor](https://github.com/laude-institute/harbor) tasks. Keep the tasks and tests fixed, then swap the model or coding agent to see what works on your code.
 
-https://github.com/user-attachments/assets/0507e745-a868-4aed-b0e6-aa6fac88ceab
+https://github.com/user-attachments/assets/ee577b45-6332-4d3c-a2bf-7e55314ccbfc
 
-**5:04 from repo to results.** A real terminal run on a small sample repo, with the waits left in. On AgentCore V1, `verify` took 3:20, including image builds, and `bench` took 1:09 with four agents. [Terminal cast](docs/demo.cast).
+**5:04 from repo to results.** A real run on a small sample repo: `verify` took 3:20 with image builds, and `bench` took 1:09 with four agents. The 2:16 video skips a long wait. [Full recording](https://github.com/didhd/taskmine/issues/1#issuecomment-7152029102) · [Terminal cast](docs/demo.cast).
 
 ## Try it
 
