@@ -19,7 +19,7 @@ Docker, Harbor and AWS are only needed to verify tasks and run agents, never for
 ## Before you open a pull request
 
 ```sh
-PYTHONPATH=src python3 -m unittest discover -s tests   # about 30 seconds
+PYTHONPATH=src python3 -m unittest discover -s tests   # under a minute
 ruff check .                                           # pip install ruff==0.17.6
 ```
 

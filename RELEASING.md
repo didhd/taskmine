@@ -75,9 +75,9 @@ trufflehog git file://$PWD/taskmine-mirror.git --results=verified,unknown --fail
 
 Both are in Homebrew (`brew install gitleaks trufflehog`) and have container images. Every
 finding needs a decision: a false positive, or a credential to revoke first and then remove from
-history. A pattern search over every blob of all 22 commits (AWS access keys, GitHub, Slack,
-OpenAI-style and Google API keys, private key blocks, JWTs) found nothing; it is not a
-substitute for the two scanners.
+history. A pattern search over every blob of the 22 commits on `main` and `feat/v2` as of
+this writing (AWS access keys, GitHub, Slack, OpenAI-style and Google API keys, private key
+blocks, JWTs) found nothing; it is not a substitute for the two scanners.
 
 ### 2. Decide what to do with the history
 
@@ -88,8 +88,8 @@ substitute for the two scanners.
   AWS 2026 slide theme and logo, Amazon Polly, Nova 2 Lite and the Amazon Ember fonts. The
   "The video" section of `README.md` on `main` adds "check brand guidance before publishing the
   video outside Amazon".
-- **Commit metadata**: all 22 commits are authored and committed by `Sanghwa Na
-  <sanghwa.me@gmail.com>`.
+- **Commit metadata**: every commit (37 on this branch) is authored and committed by
+  `Sanghwa Na <sanghwa.me@gmail.com>`.
 - **Commit messages** name the private recipe: 29e3dc6 and 41fbbc3 ("pilot recipe").
 - The options are to rewrite history (for example `git filter-repo --invert-paths --path docs/media`,
   plus a mailmap for the author) or to publish a fresh repository from one squashed commit.
@@ -98,14 +98,15 @@ substitute for the two scanners.
 
 | what | where |
 |---|---|
-| The private repository `foxl-ai/pilot`, its paths, packages and PR numbers | `docs/DOGFOOD.md`:1, 5, 11, 58, 64, 71, 96, 103, 109-113; `docs/dogfood-report.md`:14; `examples/foxl-pilot/taskmine.toml`:1, 8, 9, 15, 18, 35, 38, 39, 41, 42, 44, 45, 54, 74 (and the directory name); `README.md`:106; `src/taskmine/deps.py`:9; `src/taskmine/globs.py`:3; `src/taskmine/snapshot.py`:5; `tests/test_units.py`:15-17, 42 (a test file path from that repository) |
+| The private repository `foxl-ai/pilot`, its paths, packages and PR numbers | `docs/DOGFOOD.md`:1, 5, 11, 58, 64, 71, 96, 103, 109-113; `docs/dogfood-report.md`:14; `examples/foxl-pilot/taskmine.toml`:1, 8, 9, 15, 18, 35, 38, 39, 41, 42, 44, 45, 54, 74 (and the directory name); `src/taskmine/deps.py`:9; `src/taskmine/globs.py`:3; `src/taskmine/snapshot.py`:5; `tests/test_units.py`:15-17, 42 (a test file path from that repository); `tests/test_agentcore.py`:121, 131, 132 (`pilot-pr7` as a task id) |
 | The terminal recording `docs/demo.cast` | event line 103 (GitHub account `didhd`); 188 (`foxl-ai/pilot`, account `didhd`); 189 (`~/workspaces/foxl-ai/pilot`, 7661 merge commits); 190 (the recipe's profile names); 480; 513-848 (67 lines with `pilot-prNNNN` task ids, which are private PR numbers); 767 and 810 (a private EC2 address, 172.31.43.161, the FIPS Bedrock endpoint, paths under `/work/demo`) |
 | The demo video | `README.md`:12, a GitHub user-attachments upload of the same session as `docs/demo.cast` |
+| The example recipe link | `README.md`:158 (`examples/foxl-pilot/taskmine.toml`) |
 | A person's name | `LICENSE`:3 (copyright holder); the commit metadata above |
-| The GitHub account `didhd` | `pyproject.toml`:47-50 and `CHANGELOG.md`:112-113, the repository's own URLs (expected while it lives there) |
+| The GitHub account `didhd` | the repository's own URLs, expected while it lives there: `pyproject.toml`:47-50, `CHANGELOG.md`:112-113, `CONTRIBUTING.md`:13, `SECURITY.md`:7, `.github/ISSUE_TEMPLATE/config.yml`:4, and the commands in this file |
 | Private network addresses | `docs/DOGFOOD.md`:93 (a Docker address pool, `10.200.0.0/16`); `src/taskmine/workflow.py`:147 (`10.255.255.255`, used only to pick the outbound interface); test fixtures in `tests/test_workflow.py`:35-46 and `tests/test_gateway.py`:43. None of these names a real host. |
-| AWS account IDs | none found (no 12-digit numbers outside the AWS documentation example `123456789012`) |
-| Internal hostnames | none found; the only AWS hosts are the public Bedrock endpoints (`bedrock-runtime.<region>.amazonaws.com`, and the FIPS variant named at `src/taskmine/workflow.py`:294) |
+| AWS account IDs | none found; the only 12-digit number is AWS's documentation example `123456789012`, in `tests/test_agentcore.py`:94 |
+| Internal hostnames | none found; the only AWS hosts are the public Bedrock endpoints (`bedrock-runtime.<region>.amazonaws.com`, `bedrock-mantle.us-east-1.api.aws`, and the FIPS variant named at `src/taskmine/workflow.py`:327) |
 | Email addresses | none in the tree except `t@example.com` in tests; the author address is in the commit metadata |
 
 To repeat the search on the current tree:
@@ -119,9 +120,10 @@ git grep -n -I -i -E 'foxl|pilot|didhd|sanghwa|gmail|amazon\.com|a2z|corp\.|172\
 - Whether the dogfood numbers in `docs/DOGFOOD.md` and `docs/dogfood-report.md`, aggregates of a
   private repository, may be published, and whether to keep `examples/foxl-pilot/` or replace it
   with a recipe for a public repository.
-- Third-party code: `src/taskmine/agentcore/pr120/` is vendored from
-  `aws-samples/sample-gen-ai-evaluations-workshop` pull request #120. Confirm that the upstream
-  license allows redistribution and that `PROVENANCE.md` carries its notice.
+- Third-party code: `src/taskmine/agentcore/pr120/` is vendored from the head of
+  `aws-samples/sample-gen-ai-evaluations-workshop` pull request #120, which `PROVENANCE.md`
+  records as MIT-0. Confirm the license at that commit, and whether the pull request was merged,
+  before publishing a copy of it.
 - Turn on private vulnerability reporting (Settings > Code security), which SECURITY.md points to.
 - Check that the name `taskmine` is free on PyPI, add the trusted publisher, create the `pypi`
   environment, and remove `if: false` from the PyPI job in `release.yml`.

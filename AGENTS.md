@@ -29,7 +29,7 @@ standard library; Docker, Harbor and the cloud are only needed to verify tasks a
 | `src/taskmine/gateway.py` | the model gateway on the Docker host (SigV4 pass-through, LiteLLM endpoint) |
 | `src/taskmine/project.py`, `tomlw.py`, `globs.py` | `.taskmine/` files; a small TOML writer; the path matcher |
 | `src/taskmine/agentcore/` | running verify and bench on Amazon Bedrock AgentCore Runtime (`--env agentcore`, `--platform V1/V2`); `pr120/` is a vendored upstream harness, see `PROVENANCE.md` |
-| `src/taskmine/templates/` | files copied into every task: `Dockerfile.tmpl`, `solve.sh`, `test.sh`, `grader.py`; and `textprobe.mjs`, a Node preload used only during validation |
+| `src/taskmine/templates/` | files copied into every task: `Dockerfile.tmpl`, `solve.sh`, `test.sh`, `grader.py`; `textprobe.mjs`, a Node preload used only during validation; `taskmine_strands.py`, the factory Harbor's Strands agent runs with |
 | `tests/` | the test suite; `tests/support.py` builds real git repositories |
 | `scripts/release.py` | release checks: tag against version, release notes, contents of the wheel and sdist |
 | `demo/` | the terminal recorder behind `docs/demo.cast` |
@@ -48,8 +48,10 @@ PYTHONPATH=src python3 -m unittest discover -s tests -p test_scan.py   # one mod
 ruff check .                                                  # lint, configured in pyproject.toml
 ```
 
-The suite has about 200 tests and takes about 30 seconds on a laptop; half of that is
-`test_end_to_end.py`, which runs the whole pipeline with real `node --test` runs. It needs Python
+The suite has about 210 tests and takes 45 to 50 seconds on a laptop. Two tests are most of
+that, because they run the whole pipeline with real `node --test` runs: `test_end_to_end.py`
+(about 15 s) and the parallel-validation test in `test_agentcore.py` (about 20 s). Everything
+else takes about 12 s. It needs Python
 3.11 or later and git. Some tests skip, with the reason, when a tool is missing: Node 24 for the
 end-to-end and text-probe tests, botocore and openssl for the gateway signer test. No test needs
 Docker, Harbor, AWS credentials or a model, and none may call them. CI runs the suite on Linux
@@ -110,6 +112,9 @@ change for a new test runner that can write JUnit XML.
    `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN` or
    `AWS_BEARER_TOKEN_BEDROCK`. With Docker, Bedrock agents reach their model through the gateway,
    which signs on the host. Tests check this; extend them when you add a way to run an agent.
+   On AgentCore the runtime itself gives each session short-lived credentials that can call only
+   the agent models named at setup; that is the one exception, and widening it is a decision for
+   the maintainer (see the end of this file).
 2. **`src/taskmine/agentcore/pr120/` stays byte-identical to its upstream.** Do not format, lint
    or edit it; ruff excludes it, and `tests/test_agentcore.py` checks every file against its
    upstream blob. Changes go in taskmine's own adapter next to it.
