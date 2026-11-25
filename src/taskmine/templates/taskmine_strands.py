@@ -30,7 +30,21 @@ SYSTEM_PROMPT = (
 MAX_TOKENS = int(os.environ.get("TASKMINE_STRANDS_MAX_TOKENS", "32000"))
 
 
+def _heartbeat(every: float = 60.0) -> None:
+    """One line on stdout a minute. The runner writes its results to files and prints nothing, and
+    AgentCore ends a command that sends no byte for 15 minutes (measured: 1 of 8 trials)."""
+    import threading
+    import time
+
+    def beat():
+        while True:
+            time.sleep(every)
+            print("taskmine-strands: running", flush=True)
+    threading.Thread(target=beat, daemon=True).start()
+
+
 def create_agent(sandbox, model=None, **kwargs):
+    _heartbeat()
     if isinstance(model, str):
         from strands.models.bedrock import BedrockModel
         model = BedrockModel(model_id=model, region_name=os.environ.get("AWS_REGION") or None, max_tokens=MAX_TOKENS)
