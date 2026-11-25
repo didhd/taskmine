@@ -1,0 +1,90 @@
+# The recipe taskmine is dogfooded on, with its names changed to acme/web: a private TypeScript monorepo whose pull requests
+# land through merge trains. Each train member lands as `Merge PR #<n> (<sha>)` on a train branch, and
+# that merge commit is the change unit (base = the train tip before it). Direct merges to main are
+# `Merge pull request #<n> from <branch>`; the train merges themselves are left out because their
+# members are already units.
+
+[repo]
+name = "acme/web"
+github = "acme/web"
+
+[units]
+kind = "merges"
+branch = "main"
+since = "2026-06-01"
+pr_patterns = ['^Merge PR #(\d+) \(', '^Merge pull request #(\d+) from (?!acme/train/)']
+
+[snapshot]
+# Text files up to 8 MB stay: app/server/api/server.ts and app/CHANGELOG.md are over 1 MB and
+# the first is source every server test imports. Binary files are left out whatever their size.
+max_file_bytes = 8000000
+# Marketing media and archived social assets: 660 MB of the 1.35 GB tree, nothing a coding agent reads.
+exclude = ["site/landing/public/**", "site/landing/archive/**", "marketing/**"]
+
+[tests]
+paths = ["**/tests/**", "**/test/**", "**/__tests__/**", "**/*.test.*", "**/*.spec.*", "**/*.probe.mjs"]
+
+[limits]
+max_gold_files = 40
+max_gold_lines = 2000
+max_run_files = 6
+
+[task]
+agent_timeout_sec = 3600
+
+# The app's server tests: `cd app && npx tsx --test tests/<name>.test.mjs`, written red-first
+# (each names the head it was red on). They import the TypeScript sources directly through tsx.
+[[profiles]]
+name = "app-node-test"
+run = ["app/tests/*.test.mjs"]
+image = "node:24-bookworm@sha256:6b33b0be1647d1a577f9cebb6c8fc2587cc02c98c9956af8d0289df1791a3d10"
+workdir = "app"
+deps = ["app/package.json", "app/package-lock.json"]
+deps_normalize = "npm"
+# The same install pr-validate runs for app/.
+install = "cd /app/app && npm ci --include=dev --legacy-peer-deps --no-audit --no-fund"
+command = "node_modules/.bin/tsx --test --test-concurrency=1 --test-reporter=junit --test-reporter-destination={junit} --test-reporter=spec --test-reporter-destination=stdout {files}"
+display_command = "npx tsx --test {files}"
+timeout_sec = 900
+cpus = 2
+memory_mb = 6144
+# Many of these suites also assert on source text; the probe tells those tests from behavioural ones.
+text_probe = "node"
+
+# The API server (api/server): `cd api/server && npx tsx --test test/<name>.test.mjs`.
+# It is a root npm workspace, so the install reads the root lockfile and every workspace manifest,
+# and installs only this workspace's tree.
+[[profiles]]
+name = "api-server-node-test"
+run = ["api/server/test/*.test.mjs"]
+image = "node:24-bookworm@sha256:6b33b0be1647d1a577f9cebb6c8fc2587cc02c98c9956af8d0289df1791a3d10"
+workdir = "api/server"
+deps = [".npmrc", "package.json", "package-lock.json", "worker/package.json", "api/server/package.json",
+        "site/landing/package.json", "docs/package.json", "packages/*/package.json"]
+deps_normalize = "npm"
+install = "cd /app && npm ci --include=dev --legacy-peer-deps --no-audit --no-fund --workspace api/server"
+command = "PATH=/app/api/server/node_modules/.bin:/app/node_modules/.bin:$PATH tsx --test --test-concurrency=1 --test-reporter=junit --test-reporter-destination={junit} --test-reporter=spec --test-reporter-destination=stdout {files}"
+display_command = "npx tsx --test {files}"
+timeout_sec = 900
+cpus = 2
+memory_mb = 6144
+# Many of these suites also assert on source text; the probe tells those tests from behavioural ones.
+text_probe = "node"
+
+# The docs pages (packages/docs): `cd packages/docs && node --test test/<name>.test.mjs`.
+[[profiles]]
+name = "docs-pages-node-test"
+run = ["packages/docs/test/*.test.mjs"]
+image = "node:24-bookworm@sha256:6b33b0be1647d1a577f9cebb6c8fc2587cc02c98c9956af8d0289df1791a3d10"
+workdir = "packages/docs"
+deps = [".npmrc", "package.json", "package-lock.json", "worker/package.json", "api/server/package.json",
+        "site/landing/package.json", "docs/package.json", "packages/*/package.json"]
+deps_normalize = "npm"
+install = "cd /app && npm ci --include=dev --legacy-peer-deps --no-audit --no-fund --workspace packages/docs"
+command = "node --test --test-concurrency=1 --test-reporter=junit --test-reporter-destination={junit} --test-reporter=spec --test-reporter-destination=stdout {files}"
+display_command = "node --test {files}"
+timeout_sec = 900
+cpus = 2
+memory_mb = 6144
+# Many of these suites also assert on source text; the probe tells those tests from behavioural ones.
+text_probe = "node"

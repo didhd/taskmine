@@ -1,0 +1,23 @@
+name: Feature request
+description: A test runner, an agent, a recipe option or a command that taskmine should support.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What you are trying to do
+      description: The repository or workflow, and where taskmine stops you today.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would help
+      description: The command, flag or recipe key you have in mind, and what it should do.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you tried instead
+      description: Workarounds, or other tools that do this.

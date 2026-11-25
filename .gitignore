@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+/.venv/
+/out/
+/work/
+.claude/worktrees/
+build/
+*.egg-info/
+docs/media/src/video-render/
+docs/media/src/build/
+dist/

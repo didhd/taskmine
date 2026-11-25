@@ -1,0 +1,219 @@
+# Dogfood: a 28,000-commit TypeScript monorepo, 2026-11-24
+
+One run of taskmine over a private TypeScript monorepo: every pull request merged into `main`
+between 2026-06-01 and 2026-11-24, with the recipe in
+[examples/acme-web/taskmine.toml](../examples/acme-web/taskmine.toml). The dataset is not in
+this repository (it contains the monorepo's source); only aggregate numbers are here.
+
+## Result
+
+- **173 Harbor tasks** from three test runners: `api/server` (`tsx --test`, 88),
+  `app/tests` (`tsx --test`, 76), `packages/docs` (`node --test`, 9).
+- **Harbor 0.27.0** over all 173: the `oracle` agent scored 1.0 on 173 of 173 trials and the `nop`
+  agent 0.0 on 173 of 173, with 0 exceptions.
+- **Harbor 0.22.0** (an older release) over 12 of them: `oracle` 12 of 12 at 1.0,
+  `nop` 12 of 12 at 0.0.
+- **`taskmine check`**: 173 of 173 pass, on the box and again on the copy moved to the workstation.
+- **Reproducibility**: the box built every draft from a filtered, shallow transfer clone. Ten tasks
+  picked with a fixed seed were rebuilt on the workstation from the full clone; all ten have the same
+  draft digest as the draft that was validated and as the task that shipped.
+- No model was called to build, validate or grade anything.
+
+## The funnel
+
+| step | units | left out here, by reason |
+|---|---:|---|
+| change units in the history | 7661 | not-a-pr 5512, no-test-change 629, no-runnable-test 529, superseded 281, gold-too-large 120, no-code-change 31, too-many-run-files 7 |
+| candidates (scan) | 552 | - |
+| drafts built | 552 | stopped-at-the-time-limit 4 |
+| validated in Docker | 548 | source-text-only 179, tests-fail-with-gold 167, no-fail-to-pass 26 |
+| accepted by execution | 176 | instruction-leak 3 |
+| finished tasks | 173 | |
+
+`not-a-pr` is mostly the merge trains' own merges into `main`: their members are units already.
+The full report, with the distributions, is [dogfood-report.md](dogfood-report.md).
+
+## What the tasks look like
+
+- Fail-to-pass tests per task: median 5 (p10 1, p90 19). Pass-to-pass: median 2 (p90 42).
+- Gold change: median 7 files and 287 lines (p90 27 files, 1,151 lines).
+- Instruction sources: the pull request title in 173, the fail-to-pass test names in 173, a computed
+  interface contract (new names, modules or exact text) in 155, the closed issue in 42. In 23 more
+  the issue was left out because the leak check found gold code in it.
+
+## Findings
+
+**Half of the fail-to-pass tests check text, not behaviour.** The text probe re-runs the gold state
+giving test code the base version of every changed file it reads, while imports still load the gold
+code. 1,424 of 2,759 fail-to-pass tests (52%) failed under it: they pass because the source TEXT
+changed (a regular expression over a file, a string the code must contain). 179 drafts had no
+behavioural fail-to-pass test left and were rejected; 115 accepted tasks had some such tests
+removed from their required set. A benchmark that kept them would ask agents to guess a spelling.
+
+**Most "fails even with the fix" are one missing install step.** Of the 167 drafts whose new tests
+failed with the merged change applied, the gold run's log shows ([gold-failure-causes](#reading-the-causes)):
+
+| cause | drafts |
+|---|---:|
+| a root-workspace package (`@acme/*`) is not linked: the app profile installs `app/` only | 130 |
+| an assertion fails on Linux (the suites are written on macOS) | 16 |
+| needs a network or a local server (validation runs with `--network none`) | 9 |
+| another package is missing from the install | 6 |
+| Playwright's browser is not in the image | 6 |
+
+Linking the root workspace in the app profile's install is the largest single lever for the next
+run; it is a recipe change, not a tool change.
+
+## Bugs the run found in taskmine, fixed during it
+
+Each fix has a unit or end-to-end test in `tests/`.
+
+1. A 1 MB snapshot cap left out `app/server/api/server.ts` (1.5 MB of source every server test
+   imports). Text files now stay up to `max_file_bytes`; only binary files are always left out.
+2. Dependency layers: ignoring the repository's own version fields turned 69 distinct installs
+   into 23, which Docker then shares.
+3. A file-level static check for source-reading tests threw away behavioural tests that shared a
+   file with one grep. Replaced by the per-test, execution-based text probe.
+4. The contract scan took minutes on a test with thousands of fixture strings (each check scans a
+   300 MB snapshot). Bounded at 150 checks per kind, marked `truncated`.
+5. The leak check reported the test file paths the instruction names on purpose, and comment lines
+   that repeat a test's name. Contract text that is itself a line of the gold code (it comes from a
+   test the probe already dropped) is now left out instead of refusing the task: refusals went from
+   73 to 3.
+6. Validation sorted drafts by dependency group, so every worker waited behind the same first
+   install (75% of the box idle). Groups are now interleaved.
+
+## Infrastructure notes
+
+- One m7i.8xlarge (32 vCPU) for 2 h 6 min: 552 drafts built in about 13 min (24 processes),
+  validated in about 35 min (24 workers), Harbor sweeps about 20 min.
+- Harbor at `-n 16` needs more Docker networks than the default address pools allow after a few
+  interrupted runs (27 had leaked). The first Harbor attempt lost 141 of 152 trials to
+  `could not find an available, non-overlapping IPv4 address pool`; with
+  `{"default-address-pools": [{"base": "10.200.0.0/16", "size": 24}]}` in `/etc/docker/daemon.json`
+  the rerun had 0 exceptions.
+- Four drafts were still running when the box reached its time limit and were stopped
+  unvalidated: web-pr5355, web-pr5378, web-pr5473, web-pr8479.
+- The log of the first validation segment was overwritten when validation was restarted with
+  interleaving; every per-draft summary and run log is intact.
+
+## Reading the causes
+
+`gold-failure-causes` classifies each draft by the first matching signature in its gold run's test
+output (Playwright install message, `Cannot find package '@acme/...'`, other `ERR_MODULE_NOT_FOUND`,
+`ECONNREFUSED`/`ENOTFOUND`, ...); a draft matching none is counted as an assertion failing on Linux.
+
+## Reproduce
+
+```sh
+taskmine scan     --recipe examples/acme-web/taskmine.toml --repo <clone> --out out
+taskmine meta     --recipe examples/acme-web/taskmine.toml --out out
+taskmine build    --recipe examples/acme-web/taskmine.toml --repo <clone> --out out --jobs 24
+taskmine validate --recipe examples/acme-web/taskmine.toml --out out --jobs 24 --keep-images
+taskmine finalize --recipe examples/acme-web/taskmine.toml --out out
+taskmine check    out/tasks
+harbor run -y -p out/tasks -a oracle -n 16 --no-delete
+harbor run -y -p out/tasks -a nop -n 16
+```
+
+## Agents on the demo set (2026-11-24, second run)
+
+The demo used the everyday commands end to end:
+- On the laptop: `login`, `init`, `agents add`, and `mine --limit 120` (49 drafts).
+- On a Docker host: `verify`, which accepted 12 of the 49 and passed 12 of 12 static checks.
+- Then `bench --tasks 8 -n 8`, with both agents running in parallel through `taskmine gateway`.
+
+| agent | model (Bedrock) | solved | errors | cost | tokens in / out |
+|---|---|---:|---:|---:|---|
+| claude-code | us.anthropic.claude-sonnet-5-5 | 4 / 8 | 0 | $1.38 | 3.10 M / 35 K |
+| codex | us.openai.gpt-6.1-terra | 4 / 8 | 0 | $1.89 | 18.3 M / 68 K |
+
+- Both agents solved the same four tasks and failed the same four.
+- No credential entered a task container:
+  - The gateway signed Claude Code's Bedrock calls on the host.
+  - It served Codex through LiteLLM, which translated to Bedrock Converse.
+  - The containers could not reach the instance metadata endpoint (`iptables -I DOCKER-USER -d 169.254.169.254 -j DROP`).
+- A one-task smoke run before the demo also failed both agents on the same task. Each passed 10 of
+  11 required tests, and both failed the same test.
+
+## Four agents on AgentCore Runtime (2026-11-24)
+
+Setup:
+- Everything ran from a laptop with no Docker. `taskmine agentcore setup` bootstrapped `us-east-1`
+  (prefix `evals-tm-`).
+- `bench` built one image per task on CodeBuild: 150 to 253 s each, 6 at a time.
+- Each trial ran in its own AgentCore session.
+- The tasks were 8 tasks of this dataset (seed 0). The same images served the V1 and the V2 runs.
+
+Sanity, before any model ran: oracle 1.0 and nop 0.0 on one task, with grading in the session's
+no-network phase.
+
+**V1** (the default):
+
+| agent | model | solved | errors | cost |
+|---|---|---:|---:|---:|
+| claude-code | us.anthropic.claude-sonnet-5-5 | 3 / 8 | 0 | $3.67 |
+| opencode | us.anthropic.claude-sonnet-5-5 | 3 / 8 | 0 | $8.76 |
+| strands | us.anthropic.claude-sonnet-5-5 | 3 / 8 | 4 | - |
+| codex | us.openai.gpt-6.1-terra (bedrock-mantle) | 2 / 8 | 0 | - |
+
+**V2:**
+
+| agent | model | solved | errors | cost |
+|---|---|---:|---:|---:|
+| claude-code | us.anthropic.claude-sonnet-5-5 | 3 / 8 | 0 | $3.28 |
+| codex | us.openai.gpt-6.1-terra (bedrock-mantle) | 3 / 8 | 0 | - |
+| opencode | us.anthropic.claude-sonnet-5-5 | 3 / 8 | 0 | $7.02 |
+| strands | us.anthropic.claude-sonnet-5-5 | 3 / 8 | 1 | - |
+
+Notes:
+- Every agent that solved anything solved `pr5128` and `pr5462`. Codex on V1 was the only one to
+  miss `pr5861`.
+- Harbor reports no cost for Codex and Strands on Bedrock, so those cells are empty.
+- The Strands errors were taskmine's to fix:
+  - On V1, 4 trials stopped with `MaxTokensReachedException`. Strands' default output limit is
+    now raised to 32,000.
+  - On V2, 1 trial was cut by AgentCore after 15 minutes without output. The Strands runner
+    prints nothing, so taskmine's agent now prints a line a minute.
+- Before those fixes, OpenCode and Strands had also run on GPT-6.1 Terra: 0 of 8, 8 errors each.
+  - OpenCode: Bedrock Converse refused Terra in this account with
+    `data retention mode 'none' is not available for this model`. A plain one-message Converse
+    call with the scoped agent credentials got the same answer.
+  - Strands: Harbor ships no default Strands factory.
+
+**V1 against V2, unpaired** (p50 / p90 seconds; 32 trials each). This comparison is not paired:
+- V2 ran all 4 agents at once (16 sessions) on runtimes created minutes before, so these were
+  their first, slowest sessions.
+- V1 ran in three smaller batches.
+
+The paired verify measurement in AGENTS.md ("Decisions and why") replaces it for the platform
+decision.
+
+| | session first call | environment setup | agent run | grading | trial |
+|---|---|---|---|---|---|
+| V1 | 1.0 / 1.9 | 3.6 / 4.4 | 132 / 312 | 12 / 23 | 165 / 397 |
+| V2 | 7.8 / 9.0 | 10.8 / 11.4 | 239 / 443 | 18 / 34 | 301 / 593 |
+
+**`verify` on AgentCore.**
+- A new draft (`pr8572`) was mined and validated there: accepted with fail-to-pass 2 and
+  pass-to-pass 6, the same verdict the Docker host had given.
+- Its 8 runs took 69 to 79 s each on V1.
+- On V2 they took 166 to 217 s, and 125 to 139 s with the disk-only hook. Both were measured on a
+  freshly created runtime (cold).
+- In the later paired measurement, the RAM-tuned V2 ran its tests in 70 to 75 s. It still set up
+  about 3 s slower per run and finished 8-10% later.
+- Running the repeat runs at once took the draft from about 830 s to 501 s.
+- AGENTS.md ("Decisions and why") has the tables and the reasons V1 stays the default.
+
+## A Python repository
+
+A small synthetic repository: a package, pytest tests and two `--no-ff` merges. One merge adds a
+function and its tests; the other changes behaviour and adds a test beside an existing one. It went
+through the same `scan`, `build`, `validate`, `finalize` and `check`, with a `pytest` profile on
+`python:3.12-bookworm`:
+- Both drafts were accepted, with fail-to-pass 2 and 1 and pass-to-pass 0 and 1.
+- `check` passed 2 of 2.
+- Harbor 0.27.0 gave oracle 1.0 and nop 0.0 on both tasks.
+
+pytest writes the file path into its JUnit report only with `-o junit_family=xunit1`; the starter
+recipe sets it.

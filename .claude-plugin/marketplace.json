@@ -1,0 +1,20 @@
+{
+  "name": "taskmine",
+  "owner": {
+    "name": "Sanghwa Na",
+    "url": "https://github.com/didhd"
+  },
+  "metadata": {
+    "description": "taskmine: benchmarks built from your own merged pull requests."
+  },
+  "plugins": [
+    {
+      "name": "taskmine",
+      "source": "./",
+      "description": "Turn your repository's merged pull requests into Harbor (Terminal-Bench) coding tasks and benchmark coding agents on them, with a skill that drives the taskmine CLI.",
+      "version": "0.1.0",
+      "category": "development",
+      "homepage": "https://github.com/didhd/taskmine"
+    }
+  ]
+}

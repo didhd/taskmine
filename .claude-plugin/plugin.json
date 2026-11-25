@@ -1,0 +1,13 @@
+{
+  "name": "taskmine",
+  "version": "0.1.0",
+  "description": "Turn your repository's merged pull requests into Harbor (Terminal-Bench) coding tasks and benchmark coding agents on them. The taskmine skill drives the deterministic taskmine CLI and fixes a failing run's recipe or environment without touching what decides a task.",
+  "author": {
+    "name": "Sanghwa Na",
+    "url": "https://github.com/didhd"
+  },
+  "homepage": "https://github.com/didhd/taskmine",
+  "repository": "https://github.com/didhd/taskmine",
+  "license": "MIT-0",
+  "keywords": ["benchmark", "coding-agents", "harbor", "terminal-bench", "evaluation", "agentcore"]
+}

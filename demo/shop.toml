@@ -1,0 +1,18 @@
+# The recipe for the synthetic demo repository (demo/make_shop.py). It has no [repo] github key:
+# the repository exists only on this machine, so `mine` reads no pull request metadata from GitHub.
+
+[repo]
+name = "acme/shop"
+
+[units]
+kind = "merges"
+branch = "main"
+
+[[profiles]]
+name = "node-test"
+run = ["test/*.test.mjs"]
+image = "node:24-bookworm"
+command = "node --test --test-reporter=junit --test-reporter-destination={junit} --test-reporter=spec --test-reporter-destination=stdout {files}"
+display_command = "node --test {files}"
+timeout_sec = 120
+text_probe = "node"
