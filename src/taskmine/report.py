@@ -59,7 +59,8 @@ def build(out: Path) -> tuple[str, dict]:
     if n_drafts > len(vals):
         upath = out / "unvalidated.json"
         listed = json.loads(upath.read_text()).get("unvalidated", []) if upath.exists() else []
-        unval["stopped-at-the-time-limit"] = len(listed)
+        if listed:
+            unval["stopped-at-the-time-limit"] = len(listed)
         if n_drafts - len(vals) - len(listed):
             unval["not-run"] = n_drafts - len(vals) - len(listed)
     data["drafts"] = n_drafts
