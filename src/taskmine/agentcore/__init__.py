@@ -247,7 +247,7 @@ def prepare(tasks: Path, dest: Path) -> Path:
     for t in sorted(p for p in tasks.iterdir() if (p / "task.toml").exists()):
         rewritten = {(t, "task.toml"), (t / "environment", "Dockerfile")}
         shutil.copytree(t, dest / t.name, copy_function=os.link,
-                        ignore=lambda d, names: [n for n in names if (Path(d), n) in rewritten])
+                        ignore=lambda d, names, rewritten=rewritten: [n for n in names if (Path(d), n) in rewritten])
         (dest / t.name / "task.toml").write_text(task_toml((t / "task.toml").read_text()))
         (dest / t.name / "environment" / "Dockerfile").write_text(dockerfile((t / "environment" / "Dockerfile").read_text()))
     return dest

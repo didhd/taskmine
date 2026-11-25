@@ -46,6 +46,52 @@ class Agents(unittest.TestCase):
             self.assertEqual(env, {"OPENAI_BASE_URL": "http://10.0.0.5:8791/v1", "OPENAI_API_KEY": "sk-local"})
 
 
+    def test_reference_agents_need_no_model_or_gateway(self):
+        for kind in ("oracle", "nop"):
+            self.assertEqual(agents.harbor_args({"name": kind, "agent": kind, "provider": "-", "model": "-"}, "us-west-2",
+                                                "/nonexistent"), (["-a", kind], {}))
+
+    def test_strands_gets_taskmine_factory(self):
+        root = Path(tempfile.mkdtemp())
+        (root / "gateway.toml").write_text('[gateway]\nbedrock_url = "http://10.0.0.1:8790"\nregion = "us-west-2"\n'
+                                           'openai_url = "http://10.0.0.1:8791/v1"\nopenai_key = "sk-test"\n')
+        args, env = agents.harbor_args(agents.entry("strands", "bedrock", "us.anthropic.claude-sonnet-5-5", None, {}),
+                                       "us-west-2", root)
+        factory = next(x for x in args if x.startswith("factory_path="))
+        self.assertTrue(Path(factory.split("=", 1)[1]).is_file())
+        self.assertIn("factory=taskmine_strands:create_agent", args)
+
+
+class StarterRecipe(unittest.TestCase):
+    def test_root_level_tests_and_paths_with_spaces(self):
+        import tomllib
+        from taskmine import workflow
+        repo = Path(tempfile.mkdtemp())
+        (repo / "my tests").mkdir()
+        (repo / "a.test.mjs").write_text("")
+        (repo / "my tests" / "b.test.mjs").write_text("")
+        for cmd in (["init", "-q"], ["add", "-A"],
+                    ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "x"]):
+            subprocess.run(["git", "-C", str(repo), *cmd], check=True)
+        doc = tomllib.loads(workflow._starter_recipe("acme/shop", repo))
+        runs = {p["name"]: p["run"] for p in doc["profiles"]}
+        self.assertEqual(runs, {"node-root": ["*.test.mjs", "*.test.js"],
+                                "node-my-tests": ["my tests/*.test.mjs", "my tests/*.test.js"]})
+
+
+class GatewayUpstream(unittest.TestCase):
+    def test_plain_http_upstream_only_on_loopback(self):
+        try:
+            import botocore  # noqa: F401
+        except ImportError:
+            self.skipTest("needs botocore")
+        from taskmine import gateway
+        with self.assertRaises(SystemExit):
+            gateway.bedrock_signer("127.0.0.1", 0, "us-west-2", "http://bedrock-runtime.us-west-2.amazonaws.com", log=lambda *a, **k: None)
+        with self.assertRaises(SystemExit):
+            gateway.bedrock_signer("127.0.0.1", 0, "us-west-2", "ftp://example.invalid", log=lambda *a, **k: None)
+
+
 class Results(unittest.TestCase):
     def test_errors_are_not_counted_as_failures(self):
         with tempfile.TemporaryDirectory() as d:

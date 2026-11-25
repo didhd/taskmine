@@ -49,6 +49,9 @@ def bedrock_signer(listen: str, port: int, region: str, endpoint: str, log=print
     if creds is None:
         raise SystemExit("gateway: no AWS credentials on this host")
     up = urlsplit(endpoint)
+    if up.scheme not in ("https", "http") or (up.scheme == "http" and up.hostname not in ("127.0.0.1", "localhost", "::1")):
+        # A signed request over plain HTTP can be replayed by anyone on the path for minutes.
+        raise SystemExit(f"gateway: the upstream must be https:// (plain http only on loopback, for tests): {endpoint}")
     counter = {"n": 0}
 
     class Handler(BaseHTTPRequestHandler):
@@ -66,7 +69,8 @@ def bedrock_signer(listen: str, port: int, region: str, endpoint: str, log=print
             headers = {k: v for k, v in self.headers.items() if k.lower() not in HOP}
             req = AWSRequest(method=self.command, url=f"{endpoint}{self.path}", data=body, headers=headers)
             SigV4Auth(creds.get_frozen_credentials(), "bedrock", region).add_auth(req)
-            conn = http.client.HTTPSConnection(up.hostname, up.port or 443, timeout=600)
+            conn = (http.client.HTTPConnection(up.hostname, up.port or 80, timeout=600) if up.scheme == "http"
+                    else http.client.HTTPSConnection(up.hostname, up.port or 443, timeout=600))
             conn.request(self.command, self.path, body=body, headers=dict(req.headers.items()))
             resp = conn.getresponse()
             counter["n"] += 1
@@ -89,9 +93,18 @@ def bedrock_signer(listen: str, port: int, region: str, endpoint: str, log=print
         do_POST = _forward
         do_GET = _forward
 
-    srv = ThreadingHTTPServer((listen, port), Handler)
+    srv = _Server((listen, port), Handler)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     return srv
+
+
+class _Server(ThreadingHTTPServer):
+    """No reverse DNS lookup of the listen address at bind time (HTTPServer's getfqdn): it took 35 s on a CI runner."""
+
+    def server_bind(self):
+        import socketserver
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
 
 
 def litellm_config(models: list[str], region: str, endpoint: str, master_key: str) -> str:

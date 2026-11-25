@@ -117,7 +117,7 @@ def table(summary: dict) -> str:
         n = a["trials"] - a["errors"]
         rate = f"{100 * a['solved'] / n:.0f}%" if n else "-"
         cost = f"${a['cost_usd']:.2f}" if a["cost_usd"] is not None else "-"
-        lines.append(f"{a['name']:<34} {str(a['model'])[:32]:<32} {a['solved']:>4}/{a['trials']:<4} {rate:>6} "
+        lines.append(f"{a['name']:<34} {str(a['model'] or '-')[:32]:<32} {a['solved']:>4}/{a['trials']:<4} {rate:>6} "
                      f"{a['errors']:>6} {cost:>8}")
     tasks = sorted({t for a in agents for t in a["per_task"]})
     if tasks and len(tasks) <= 30:

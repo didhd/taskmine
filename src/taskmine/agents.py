@@ -14,16 +14,14 @@ your environment.
 from __future__ import annotations
 
 import json
-import os
 import re
-import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 
 # Harbor ships no default Strands agent: its runner calls a factory. taskmine's gives the agent the
 # runner's shell and file editor (templates/taskmine_strands.py).
 STRANDS_FACTORY = ["--ak", f"factory_path={(Path(__file__).parent / 'templates' / 'taskmine_strands.py').resolve()}",
                    "--ak", "factory=taskmine_strands:create_agent"]
-from dataclasses import dataclass
 
 
 class AgentError(ValueError):
@@ -70,23 +68,6 @@ def entry(agent: str, provider: str, model: str, name: str | None, env: dict[str
             "env": dict(env)}
 
 
-def aws_credentials() -> dict[str, str]:
-    """AWS credentials for the agent containers: the environment's, else the AWS CLI's resolution."""
-    keys = ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN")
-    if os.environ.get("AWS_ACCESS_KEY_ID") and os.environ.get("AWS_SECRET_ACCESS_KEY"):
-        return {k: os.environ[k] for k in keys if os.environ.get(k)}
-    if os.environ.get("AWS_BEARER_TOKEN_BEDROCK"):
-        return {"AWS_BEARER_TOKEN_BEDROCK": os.environ["AWS_BEARER_TOKEN_BEDROCK"]}
-    p = subprocess.run(["aws", "configure", "export-credentials", "--format", "process"],
-                       capture_output=True, text=True)
-    if p.returncode != 0:
-        raise AgentError("no AWS credentials for a bedrock agent: set them in the environment, "
-                         "or configure the AWS CLI (`aws configure export-credentials` failed)")
-    d = json.loads(p.stdout)
-    out = {"AWS_ACCESS_KEY_ID": d["AccessKeyId"], "AWS_SECRET_ACCESS_KEY": d["SecretAccessKey"]}
-    if d.get("SessionToken"):
-        out["AWS_SESSION_TOKEN"] = d["SessionToken"]
-    return out
 
 
 def gateway_info(root) -> dict:
@@ -103,6 +84,8 @@ def harbor_args(a: dict, region: str, root=".taskmine") -> tuple[list[str], dict
     Bedrock agents go through the gateway (`taskmine gateway`): the agent container gets the
     gateway's address and never an AWS credential.
     """
+    if a["agent"] in ("oracle", "nop"):  # Harbor's reference agents: no model, no credentials
+        return ["-a", a["agent"]], {}
     kind = CATALOG[a["agent"]]
     env: dict[str, str] = {}
     args = ["-a", kind.harbor]

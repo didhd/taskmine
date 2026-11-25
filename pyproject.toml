@@ -85,7 +85,3 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "demo/record.py" = ["E401"]  # one-line import of three POSIX-only modules, inside the function that needs them
-# Checked by hand: prepare()'s `ignore` lambda is called by copytree within the same loop iteration.
-"src/taskmine/agentcore/__init__.py" = ["B023"]
-# STRANDS_FACTORY sits above `from dataclasses import dataclass`; drop this once that import moves up.
-"src/taskmine/agents.py" = ["E402"]

@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -56,14 +57,16 @@ def cmd_login(a) -> int:
 def _starter_recipe(repo: str, clone: Path) -> str:
     """A first recipe from what the repository holds; review it before mining."""
     files = subprocess.run(["git", "-C", str(clone), "ls-tree", "-r", "--name-only", "HEAD"],
-                           capture_output=True, text=True).stdout.split()
-    node_tests = sorted({f.rsplit("/", 1)[0] for f in files if f.endswith((".test.mjs", ".test.js"))})
+                           capture_output=True, text=True).stdout.splitlines()  # paths may hold spaces
+    node_tests = sorted({f.rsplit("/", 1)[0] if "/" in f else "" for f in files if f.endswith((".test.mjs", ".test.js"))})
     py_tests = any(f.split("/")[-1].startswith("test_") and f.endswith(".py") for f in files)
     out = [f'[repo]\nname = "{repo}"\ngithub = "{repo}"\n', '[units]\nkind = "merges"\nbranch = "main"\n']
     for d in node_tests[:4]:
-        name = "node-" + d.replace("/", "-")
+        name = "node-" + (re.sub(r"[^A-Za-z0-9]+", "-", d).strip("-") or "root")
+        pre = f"{d}/" if d else ""
+        run = json.dumps([f"{pre}*.test.mjs", f"{pre}*.test.js"])
         out.append(
-            f'[[profiles]]\nname = "{name}"\nrun = ["{d}/*.test.mjs", "{d}/*.test.js"]\nimage = "node:24-bookworm"\n'
+            f'[[profiles]]\nname = "{name}"\nrun = {run}\nimage = "node:24-bookworm"\n'
             f'command = "node --test --test-reporter=junit --test-reporter-destination={{junit}} '
             f'--test-reporter=spec --test-reporter-destination=stdout {{files}}"\ndisplay_command = "node --test {{files}}"\n'
             'text_probe = "node"\n')
