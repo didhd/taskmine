@@ -115,6 +115,12 @@ def render(
         for n in contract.new_names:
             parts.append(f"- `{n}`")
         parts.append("")
+        if contract.calls:
+            parts.append("The tests call them like this (the first call of each, as written):")
+            parts.append("")
+            for c in contract.calls:
+                parts.append(f"- `{c}`" if "`" not in c else f"- {c!r}")
+            parts.append("")
     if contract.exact_text:
         if "contract" not in sources:
             sources.append("contract")

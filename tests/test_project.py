@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+import subprocess
+import sys
 import tomllib
 from pathlib import Path
 
@@ -64,6 +66,26 @@ class StarterRecipe(TempDir):
         self.assertTrue(web.run.match("web/test/b.test.js"))
         self.assertTrue(py.run.match("pkg/tests/test_c.py"))
         self.assertIn("junit_family=xunit1", py.command)
+
+    def test_a_pyproject_repository_installs_what_each_base_declares(self):
+        h = History(self.tmp / "clone")
+        h.commit("init", {"pyproject.toml": "[project]\nname = 'x'\n", "src/x/__init__.py": "", "tests/test_x.py": "x"})
+        h.write()
+        py = config.load(recipe(self.tmp, workflow._starter_recipe("acme/x", self.tmp / "clone"))).profiles[0]
+        self.assertEqual(py.deps, ["pyproject.toml", "requirements*.txt", "requirements/*.txt"])
+        self.assertEqual(py.env, {"PYTHONPATH": "src"})
+        self.assertEqual(subprocess.run(["sh", "-n", "-c", py.install]).returncode, 0)
+        # The same install reads a base with a tests group, one with a test extra, and one with neither.
+        bases = {'[project]\nname = "x"\n[dependency-groups]\ntests = ["pytest"]\n': {"p": "x", "e": "", "g": "tests"},
+                 '[project]\nname = "x"\n[project.optional-dependencies]\ntest = ["pytest"]\n': {"p": "x", "e": "test", "g": ""},
+                 '[tool.poetry]\nname = "x"\n': {"p": "", "e": "", "g": ""}}
+        for text, want in bases.items():
+            d = self.tmp / "base"
+            d.mkdir(exist_ok=True)
+            (d / "pyproject.toml").write_text(text)
+            got = {k: subprocess.run([sys.executable, "-c", workflow._PY_PICK, k], cwd=d, capture_output=True,
+                                     text=True, check=True).stdout.strip() for k in "peg"}
+            self.assertEqual(got, want, text)
 
     def test_a_repository_without_tests_gets_a_note_and_no_profile(self):
         h = History(self.tmp / "clone")

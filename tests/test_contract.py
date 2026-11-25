@@ -29,8 +29,87 @@ class Lexer(unittest.TestCase):
         _, strings = contract.split_source("a.js", "const s = 'open\nconst t = 'closed';\n")
         self.assertEqual(strings, [("open", False), ("closed", False)])
 
-    def test_other_languages_are_left_alone(self):
-        self.assertEqual(contract.split_source("a.go", "x := \"y\""), ("x := \"y\"", []))
+    def test_a_language_without_a_lexer_is_left_alone(self):
+        self.assertEqual(contract.split_source("a.ex", "x = \"y\""), ("x = \"y\"", []))
+
+    def test_c_family_ruby_and_php_strings_and_comments(self):
+        cases = {
+            "cart/discount_test.go": ('package cart\n// TestX checks unknown\nfunc TestUnknown(t *testing.T) {\n'
+                                      '\tif err.Error() != "unknown code: FREE" { t.Run("sub case", nil) }\n\tr := `raw text`\n}\n',
+                                      [("unknown code: FREE", False), ("sub case", True), ("raw text", False)]),
+            "tests/discount.rs": ("fn f<'a>(x: &'a str) -> char { let c = 'x'; let s = r#\"raw \"q\"\"#; "
+                                  'assert_eq!(e, Err("unknown code: FREE".to_string())) }\n',
+                                  [('raw "q"', False), ("unknown code: FREE", False)]),
+            "Shop.Tests/T.cs": ('[Fact(DisplayName = "shows text")] public void A() { var t = $"x {y}"; '
+                                'Assert.Equal("unknown code: FREE", m); }\n',
+                                [("shows text", True), ("unknown code: FREE", False)]),
+            "spec/d_spec.rb": ('# comment unknown\nit "raises unknown code" do\n'
+                               '  expect { x }.to raise_error(ArgumentError, "unknown code: FREE")\n  y = "v#{z}"\nend\n',
+                               [("raises unknown code", True), ("unknown code: FREE", False)]),
+            "tests/DTest.php": ("<?php // c unknown\n# h unknown\n$this->expectExceptionMessage('unknown code: FREE'); $s = \"a $b\";\n",
+                                [("unknown code: FREE", False)]),
+            "src/test/java/DTest.java": ('@DisplayName("nice name") void t() { assertEquals("unknown code: FREE", e.getMessage()); '
+                                         "char q = '\"'; }\n", [("nice name", True), ("unknown code: FREE", False)]),
+        }
+        for path, (src, want) in cases.items():
+            code, strings = contract.split_source(path, src)
+            self.assertNotIn("unknown", code, path)
+            self.assertEqual(strings, want, path)
+
+    def test_text_the_change_formats_counts_as_text_it_adds(self):
+        gold = ('return 0, fmt.Errorf("unknown code: %s", code)\nthrow new IllegalArgumentException("unknown code: " + c);\n'
+                "throw new Error(`unknown code: ${code}`);\nraise ArgumentError, \"unknown code: #{code}\"\n")
+        templates = contract.gold_templates(gold)
+        self.assertTrue(all(any(t.match("unknown code: FREE") for t in templates[i:i + 1]) for i in range(4)), templates)
+        self.assertFalse(any(t.match("something else") for t in templates))
+
+    def test_format_expressions_and_specs_count_as_placeholders(self):
+        golds = ['raise ValueError(f"unknown code: {code.strip()}")', 'raise KeyError(f"unknown code: {code!r:>5}")',
+                 'throw new ArgumentException($"unknown code: {code.Trim()}");', 'bail!("unknown code: {:?}", code)',
+                 'throw Shop.Error("unknown code: \\(code)")', 'throw IllegalArgumentException("unknown code: $code")']
+        for gold in golds:
+            self.assertTrue(any(t.match("unknown code: FREE") for t in contract.gold_templates(gold)), gold)
+
+
+class NewModulesAndCalls(unittest.TestCase):
+    BASE = {"shop/__init__.py", "shop/cart.py", "src/lib.rs", "src/cart.rs", "src/Cart.php", "lib/shop/cart.rb",
+            "pkg/utils.py", "README.md"}
+
+    def new_files(self, tests, created):
+        return contract.imported_new_files(tests, self.BASE, self.BASE | set(created) | set(tests))
+
+    def test_an_import_in_any_language_names_a_file_the_change_creates(self):
+        cases = {
+            "tests/test_discount.py": ("from shop.discount import discount\n", "shop/discount.py"),
+            "tests/discount.rs": ("use shop::discount::discount;\n", "src/discount.rs"),
+            "tests/DiscountTest.php": ("<?php\nuse Acme\\Shop\\Discount;\n", "src/Discount.php"),
+            "spec/discount_spec.rb": ('require_relative "../lib/shop/discount"\n', "lib/shop/discount.rb"),
+            "tests/coupon.rs": ("use shop::coupon;\n", "src/coupon/mod.rs"),
+        }
+        for test, (src, created) in cases.items():
+            self.assertEqual(self.new_files({test: src}, [created, "docs/discount.md"]), [created], test)
+
+    def test_a_name_a_base_file_has_or_an_imported_name_is_not_a_new_module(self):
+        self.assertEqual(self.new_files({"tests/test_u.py": "from pkg.utils import x\n"}, ["other/utils.py"]), [])
+        self.assertEqual(self.new_files({"test/a.test.ts": "import { discount } from 'vitest';\n"}, ["src/discount.ts"]), [])
+
+    def test_the_first_call_skips_titles_and_comments_and_keeps_the_receiver(self):
+        src = ("test('discount(1000, SAVE10) is 100', () => {\n  // discount(1, 2)\n"
+               "  expect(discount(1000, 'SAVE10')).toBe(100);\n});\n")
+        self.assertEqual(contract.first_call(src, "discount"), "discount(1000, 'SAVE10')")
+        self.assertEqual(contract.first_call("$this->assertSame(1, Discount::of(1000, 'A'));", "Discount"),
+                         "Discount::of(1000, 'A')")
+        self.assertEqual(contract.first_call("expect(described_class.of(1000, \"A\")).to eq(1)", "of"),
+                         'described_class.of(1000, "A")')
+        self.assertIsNone(contract.first_call("x = discount(\n  1000)\n", "discount"))
+
+    def test_a_short_name_counts_when_the_change_declares_it(self):
+        tests = {"spec/d_spec.rb": 'it "x" do\n  expect(described_class.of(1000, "A")).to eq(1)\nend\n'}
+        c = contract.extract(tests, b"a list of things\n", set(), set(tests), "def self.of(cents, code)\n")
+        self.assertEqual(c.new_names, ["of"])
+        self.assertEqual(c.calls, ['described_class.of(1000, "A")'])
+        c = contract.extract(tests, b"Money.of(5)\n", set(), set(tests), "def self.of(cents, code)\n")
+        self.assertEqual(c.new_names, [])
 
 
 class Extract(unittest.TestCase):

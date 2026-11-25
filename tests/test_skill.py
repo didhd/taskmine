@@ -56,6 +56,12 @@ class AgentSkillFormat(unittest.TestCase):
             self.assertIn(used, commands, f"the skill names `taskmine {used}`")
 
 
+class RunsWithoutAnInstall(unittest.TestCase):
+    def test_the_skill_pins_the_release_it_ships_in(self):
+        pins = set(re.findall(r"github.com/didhd/taskmine@v([0-9.]+)", (SKILL / "SKILL.md").read_text()))
+        self.assertEqual(pins, {taskmine.__version__}, "the uvx and uv tool lines name this release")
+
+
 class OneCopy(unittest.TestCase):
     def test_the_packaged_skill_equals_the_repository_skill(self):
         a = {p.relative_to(SKILL): p.read_bytes() for p in SKILL.rglob("*") if p.is_file()}

@@ -54,6 +54,43 @@ def cmd_login(a) -> int:
     return 0
 
 
+# Read inside the image, from the commit's own pyproject.toml: "x" when it has a [project] table, else
+# the first of these names that is an extra (e) or a dependency group (g).
+_PY_PICK = ('import sys, tomllib; d = tomllib.load(open("pyproject.toml", "rb")); '
+            's = {"p": {"x": 1} if "project" in d else {}, "e": d.get("project", {}).get("optional-dependencies", {}), '
+            '"g": d.get("dependency-groups", {})}[sys.argv[1]]; '
+            'print(next((k for k in ("x", "tests", "test", "testing", "dev") if k in s), ""))')
+_PY_REQUIREMENTS = ("requirements/tests.txt", "requirements/test.txt", "requirements-tests.txt", "requirements-test.txt",
+                    "requirements/dev.txt", "requirements-dev.txt")
+
+
+def _python_install(files: list[str]) -> tuple[list[str], str, str]:
+    """(deps, install, env line) for a pytest profile.
+
+    One recipe covers every change, and older ones declare their dependencies differently (a
+    dependency group that HEAD has may not exist yet), so the install reads each base's own files
+    in the image: pyproject.toml's dependencies with its tests (or test, testing, dev) extra and
+    dependency group when they exist, then the first test requirements file and requirements.txt.
+    A src/ layout puts src on PYTHONPATH, so the tests import the package without installing it.
+    """
+    fs = set(files)
+    deps = (["pyproject.toml"] if "pyproject.toml" in fs else []) + ["requirements*.txt", "requirements/*.txt"]
+    tests_req = " ".join(_PY_REQUIREMENTS)
+    install = " && ".join([
+        "pip install --no-cache-dir uv",
+        "cd /app",
+        f"P='{_PY_PICK}'",
+        'if [ -f pyproject.toml ]; then if [ -n "$(python3 -c "$P" p)" ]; then E=$(python3 -c "$P" e) && '
+        'uv pip install --system -r pyproject.toml ${E:+--extra "$E"} || exit 1; fi; '
+        'G=$(python3 -c "$P" g) || exit 1; if [ -n "$G" ]; then uv pip install --system --group "$G" || exit 1; fi; fi',
+        f'for r in {tests_req}; do if [ -f "$r" ]; then uv pip install --system -r "$r" || exit 1; break; fi; done',
+        'if [ -f requirements.txt ]; then uv pip install --system -r requirements.txt; fi',
+        "uv pip install --system pytest",
+    ])
+    src = any(f.startswith("src/") and f.endswith("/__init__.py") for f in files)
+    return deps, install, ('env = { PYTHONPATH = "src" }\n' if src else "")
+
+
 def _starter_recipe(repo: str, clone: Path) -> str:
     """A first recipe from what the repository holds; review it before mining."""
     files = subprocess.run(["git", "-C", str(clone), "ls-tree", "-r", "--name-only", "HEAD"],
@@ -71,8 +108,9 @@ def _starter_recipe(repo: str, clone: Path) -> str:
             f'--test-reporter=spec --test-reporter-destination=stdout {{files}}"\ndisplay_command = "node --test {{files}}"\n'
             'text_probe = "node"\n')
     if py_tests:
-        out.append('[[profiles]]\nname = "pytest"\nrun = ["**/test_*.py"]\nimage = "python:3.12-bookworm"\n'
-                   'deps = ["requirements.txt"]\ninstall = "pip install -r /app/requirements.txt pytest"\n'
+        deps, install, env = _python_install(files)
+        out.append('[[profiles]]\nname = "pytest"\nrun = ["**/test_*.py", "**/*_test.py"]\nimage = "python:3.12-bookworm"\n'
+                   f'deps = {json.dumps(deps)}\ninstall = {json.dumps(install)}\n{env}'
                    'command = "python -m pytest -p no:cacheprovider -o junit_family=xunit1 --junitxml={junit} {files}"\n'
                    'display_command = "python -m pytest {files}"\n')
     if len(out) == 2:
@@ -270,7 +308,10 @@ def cmd_bench(a) -> int:
     run_dir = proj.out / "bench" / a.run
     run_dir.mkdir(parents=True, exist_ok=True)
     tasks = bench_mod.pick_tasks(proj.out / "tasks", a.tasks, a.seed, run_dir)
-    n = len([p for p in tasks.iterdir() if (p / "task.toml").exists()])
+    n = len([p for p in tasks.iterdir() if (p / "task.toml").exists()]) if tasks.exists() else 0
+    if n == 0:
+        print("no tasks to benchmark: `taskmine verify` keeps the drafts that execution proves, and none are kept yet")
+        return 1
     where = f"AgentCore Runtime ({a.platform}, arm64)" if a.env == "agentcore" else "Docker"
     ok(f"bench {c('1', a.run)}: {len(chosen)} agents x {n} tasks on {where}, {a.concurrency} at a time per agent")
     if a.env == "agentcore":

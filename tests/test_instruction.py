@@ -77,6 +77,12 @@ class Render(unittest.TestCase):
         self.assertEqual(sources, ["title", "tests", "contract"])
         self.assertIn("## Names the tests use that do not exist yet\n\n- module `lib/coupon.mjs`\n- `applyCoupon`\n", md)
         self.assertIn("## Exact text the tests look for\n\n- `E_COUPON`\n- 'a `b` c'\n", md)
+        self.assertNotIn("The tests call them", md)
+
+    def test_calls_follow_the_names(self):
+        md, _ = render(contract=Contract(new_names=["of"], calls=['Discount::of(1000, "A")']))
+        self.assertIn("- `of`\n\nThe tests call them like this (the first call of each, as written):\n\n"
+                      '- `Discount::of(1000, "A")`\n', md)
 
     def test_exact_text_alone_still_counts_as_the_contract(self):
         _, sources = render(contract=Contract(exact_text=["E_X"]))

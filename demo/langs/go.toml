@@ -1,0 +1,20 @@
+# Recipe for demo/langs/make_repo.py go: a synthetic repository, so no GitHub key.
+# Dependencies are installed when the image is built; validation and grading run with no network.
+
+[repo]
+name = "acme/shop-go"
+
+[units]
+kind = "merges"
+branch = "main"
+
+[[profiles]]
+name = "go-test"
+run = ["**/*_test.go"]
+image = "golang:1.24-bookworm"
+deps = ["go.mod"]
+install = "cd /app && go install gotest.tools/gotestsum@v1.12.1 && go mod download"
+# Only the run files' own tests, in their packages.
+command = 'gotestsum --junitfile {junit} -- -count=1 -run "^($(grep -ho "^func Test[A-Za-z0-9_]*" {files} | cut -c6- | paste -sd"|" -))$" $(for f in {files}; do echo "./$(dirname "$f")"; done | sort -u)'
+display_command = "go test ./..."
+text_probe = "static"

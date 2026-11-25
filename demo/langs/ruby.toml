@@ -1,0 +1,22 @@
+# Recipe for demo/langs/make_repo.py ruby: a synthetic repository, so no GitHub key.
+# Dependencies are installed when the image is built; validation and grading run with no network.
+
+[repo]
+name = "acme/shop-ruby"
+
+[units]
+kind = "merges"
+branch = "main"
+
+[tests]
+paths = ["spec/**"]
+
+[[profiles]]
+name = "rspec"
+run = ["spec/*_spec.rb"]
+image = "ruby:3.3-bookworm"
+deps = ["Gemfile"]
+install = "cd /app && bundle install"
+command = "bundle exec rspec --format RspecJunitFormatter --out {junit} {files}"
+display_command = "bundle exec rspec {files}"
+text_probe = "static"

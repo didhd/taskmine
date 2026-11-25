@@ -1,6 +1,6 @@
 {
   "name": "taskmine",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Turn your repository's merged pull requests into Harbor (Terminal-Bench) coding tasks and benchmark coding agents on them. The taskmine skill drives the deterministic taskmine CLI and fixes a failing run's recipe or environment without touching what decides a task.",
   "author": {
     "name": "Sanghwa Na",

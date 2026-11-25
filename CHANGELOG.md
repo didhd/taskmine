@@ -8,6 +8,76 @@ releases are made.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-11-25
+
+### Added
+
+- Eight languages, checked end to end on AgentCore:
+  - `demo/langs/make_repo.py` writes a synthetic repository in Python, TypeScript, Go, Java, Rust,
+    C#, Ruby or PHP;
+  - `demo/langs/<lang>.toml` is its recipe: pytest, vitest, `go test` through gotestsum, Maven
+    with JUnit 5, cargo-nextest, `dotnet test` with xUnit, RSpec, PHPUnit.
+- The skill needs no install: without `taskmine` on PATH, it runs every command through
+  `uvx --from git+https://github.com/didhd/taskmine@v0.1.1 taskmine`.
+- The README leads with `npx skills add didhd/taskmine`, which installs the skill for any agent
+  that reads Agent Skills.
+
+### Fixed
+
+- **Test files for runners whose JUnit has no file attribute.** Maven and Gradle (surefire),
+  gotestsum, cargo-nextest and `dotnet test` name a testcase by class, package or binary. The grader
+  filed such tests under the class name, so every run file read as "no tests". It now finds the
+  run file in this order:
+  - the class as a path (`com.acme.CartTest` -> `.../com/acme/CartTest.java`);
+  - the class, binary or package name as the file stem or its directory;
+  - the file that defines the test's identifier;
+  - the only run file.
+  A path in the class or the suite name (vitest, jest) is taken as is.
+- **The interface contract for languages other than JavaScript and Python.**
+  - Before, it read Go, Java, Kotlin, Rust, C#, Swift, C/C++, PHP and Ruby test code without
+    removing strings and comments. The words of an error message (`unknown`, `code`) were listed as
+    new names, and no exact text was found.
+  - Those languages now have their own comment and string forms: Go raw strings, Rust raw strings
+    and lifetimes, C# verbatim and interpolated strings, text blocks, and Ruby and PHP `#`
+    comments.
+  - The strings that are test titles are known by what precedes them: rspec and minitest `it` and
+    `test`, Go `t.Run`, JUnit `@DisplayName`, xUnit `DisplayName =`.
+- **Exact text the change formats.** A test that checks `"unknown code: FREE"` against a change
+  that writes `"unknown code: %s"` now gets that text in its instruction. This also covers
+  `${...}`, `#{...}`, `\(...)`, `$name`, and any `{...}` group: `{}`, `{0}`, `{:?}`, and f-string
+  or C# expressions such as `{code.strip()}`. A string the change concatenates counts too. Before,
+  only text the gold code held verbatim was listed, so such tasks asked agents to guess the
+  message.
+- **New modules in any language.** A test that imports a file the change creates is told that
+  file's path, from an import statement in any language (`from shop.discount import`,
+  `use shop::discount::`, `use Acme\Shop\Discount;`, `require "shop/discount"`). Before, only
+  relative JavaScript and Python imports counted, so agents put a correct function in the wrong
+  module and every test failed to import it.
+- **Short names the change declares.** Names under 4 characters were never listed, so a new
+  method such as Ruby's `def self.of` went unmentioned. They are now listed when the change
+  declares them and the base neither calls nor declares them.
+- **How the tests call each new name.** The instruction now quotes the first call of each new
+  name in the tests, as written (`Discount::of(1000, 'SAVE10')`), so the argument order is not a
+  guess. Only the call is quoted, never the expected result.
+- **AgentCore: `localhost` in the session.** A session's `/etc/hosts` is empty and read-only, and
+  the agent's namespace has no DNS, so `localhost` did not resolve: vitest could not start, nor
+  could any test that serves on localhost. The image now uses glibc's `myhostname` module.
+- **AgentCore: images whose base already has Python 3.12** (python, maven, Ubuntu 24.04) failed
+  to build in the Strands step, which changed a folder uv had not created. Strands' venv is now
+  also compiled to bytecode at build time.
+- `bench` with no verified tasks says so instead of failing with a traceback.
+- **The starter pytest profile for repositories without `requirements.txt`.** It required that
+  file, so a project that declares its dependencies in `pyproject.toml` (pallets/itsdangerous)
+  had every draft refused as `deps-missing`. The install now reads each base's own files in the
+  image: `pyproject.toml`'s dependencies with its `tests`, `test`, `testing` or `dev` extra and
+  dependency group when they exist, then the first test requirements file and
+  `requirements.txt`. One recipe covers old and new commits, which declare their dependencies
+  differently. A `src/` layout puts `src` on `PYTHONPATH`, and `*_test.py` files count as tests.
+- **Toolchains outside PATH on AgentCore.** PR #120's layer gives a session only PATH, VIRTUAL_ENV,
+  UV_*, LANG, LC_ALL and HOME. Rust's RUSTUP_HOME and CARGO_HOME, Ruby's GEM_HOME and BUNDLE_*,
+  JAVA_HOME, NUGET_PACKAGES, the DOTNET_*, PHP_* and other toolchain variables are now added to
+  the session's environment, for the agent and the grader. The image tag changes with that step.
+
 ## [0.1.0] - 2026-11-25
 
 The first tagged release, so everything below is new. Changed, Removed and Fixed describe the
@@ -162,5 +232,6 @@ differences from the untagged code that was on `main` before it.
   sign-in, and shows the clone path relative to the current directory.
 - The report no longer lists a reason with a count of 0.
 
-[Unreleased]: https://github.com/didhd/taskmine/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/didhd/taskmine/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/didhd/taskmine/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/didhd/taskmine/releases/tag/v0.1.0

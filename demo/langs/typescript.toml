@@ -1,0 +1,19 @@
+# Recipe for demo/langs/make_repo.py typescript: a synthetic repository, so no GitHub key.
+# Dependencies are installed when the image is built; validation and grading run with no network.
+
+[repo]
+name = "acme/shop-typescript"
+
+[units]
+kind = "merges"
+branch = "main"
+
+[[profiles]]
+name = "vitest"
+run = ["test/*.test.ts"]
+image = "node:24-bookworm"
+deps = ["package.json"]
+install = "cd /app && npm install --no-audit --no-fund"
+command = "npx vitest run --reporter=junit --outputFile={junit} {files}"
+display_command = "npx vitest run {files}"
+text_probe = "static"

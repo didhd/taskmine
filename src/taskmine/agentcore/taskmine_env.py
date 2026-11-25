@@ -39,6 +39,12 @@ if _mode not in _MODES:
     raise ValueError(f"TASKMINE_AC_WARMUP must be disk or ram, not {_mode!r}")
 WARMUP = _MODES[_mode] if PLATFORM == "V2" else None
 HOOKS = {"build": {"warmup": {"action": {"httpPost": {"path": "/warmup", "port": 9090}}}}}
+TOOLCHAIN_VARS = ("CARGO_HOME|RUSTUP_HOME|RUST_VERSION|GOPATH|GOROOT|GOTOOLCHAIN|GOFLAGS|JAVA_HOME|JAVA_VERSION|MAVEN_HOME|"
+                  "MAVEN_CONFIG|MAVEN_OPTS|GRADLE_HOME|GRADLE_USER_HOME|NUGET_PACKAGES|DOTNET_[A-Z_]+|ASPNETCORE_[A-Z_]+|"
+                  "GEM_HOME|GEM_PATH|BUNDLE_[A-Z_]+|RUBY_[A-Z_]+|PHP_[A-Z_]+|PHPIZE_DEPS|COMPOSER_[A-Z_]+|NODE_[A-Z_]+|"
+                  "NPM_CONFIG_[A-Z_]+|YARN_[A-Z_]+|PYTHONPATH|PYTHONUNBUFFERED|PIP_[A-Z_]+|CI")
+ENV_TAIL = ("\n# ===== taskmine: the image's toolchain variables for the agent and the grader =====\n"
+            f"RUN printenv | grep -E '^({TOOLCHAIN_VARS})=' >> /opt/firewall/task.env; true\n")
 WARMUP_FILE = Path(__file__).resolve().parent / "taskmine_warmup.py"
 WARMUP_TAIL = ('\n# ===== taskmine: V2 build hook (taskmine_warmup.py), then PR #120\'s shim =====\n'
                f'ENV TASKMINE_WARMUP_MODE={WARMUP or "disk"}\n'
@@ -60,6 +66,22 @@ if not getattr(p2, "_taskmine_patched", False):  # once per process, even if thi
     if PLATFORM == "V2":
         _v1_name = p2.runtime_name
         p2.runtime_name = lambda task: _v1_name(task) + "_v2"
+    # PR #120's layer gives sessions only PATH, VIRTUAL_ENV, UV_*, LANG, LC_ALL and HOME from the image
+    # (its as-agent starts commands with `env -i`). Toolchains that live outside those (rustup's
+    # RUSTUP_HOME and CARGO_HOME, Ruby's GEM_HOME, a NuGet or Maven cache path, a JDK's JAVA_HOME) then
+    # break in the session: append their variables to its task.env, after the layer has written it.
+    _base_key, _base_ctx = ace.image_key, ace.env_dir_context
+    _e = "e" + hashlib.sha256(ENV_TAIL.encode()).hexdigest()[:2]
+    ace.image_key = lambda environment_dir, name, verifier: _base_key(environment_dir, name, verifier) + _e
+
+    def _env_context(environment_dir):
+        inner = _base_ctx(environment_dir)
+
+        def ctx(tag, module, dest: Path):
+            inner(tag, module, dest)
+            (dest / "Dockerfile").write_text((dest / "Dockerfile").read_text() + ENV_TAIL)
+        return ctx
+    ace.env_dir_context = _env_context
     if WARMUP:
         _key, _ctx = ace.image_key, ace.env_dir_context
         # The hook changes the image, so its tag does too: `w` and a hash of the hook file and the Dockerfile tail.
