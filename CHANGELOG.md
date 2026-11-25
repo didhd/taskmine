@@ -55,10 +55,14 @@ differences from the untagged code that was on `main` before it.
   - the pass-through serves only loopback and private addresses, and the LiteLLM endpoint needs a
     key taskmine generates; `--detach` runs the gateway in the background with its log in
     `.taskmine/gateway.log`, and `.taskmine/gateway.toml` (mode 0600) says where it listens.
-- AgentCore platform V2 as an option (`--platform V2`; V1 stays the default, measured faster for
-  test runs that read many small files). V2 runtimes are named `<V1 name>_v2`, so both can
-  serve one image. `TASKMINE_AC_WARMUP=1` adds AgentCore's build hook, which reads the image
-  files sessions need while the V2 snapshot is built.
+- AgentCore platform V2 as an explicit option (`--platform V2`).
+  - V1 stays the default for `verify` and `bench`: in a paired measurement, V2 with AgentCore's
+    guidance applied matched V1's test time but set up about 3 s slower per run.
+  - V2 runtimes are named `<V1 name>_v2`, so both can serve one image.
+  - `TASKMINE_AC_WARMUP=ram|disk` adds AgentCore's build hook. `ram` holds the repository in the
+    memory snapshot (a tmpfs bound over `/app`); `disk` only reads the files sessions need.
+- `demo/make_shop.py` and `demo/shop.toml`: a synthetic repository for a demo that shows no real
+  code. `demo/record.py --live` records a session with wall-clock times.
 - Agents:
   - Run end to end:
     - `claude-code`, `codex`, `opencode` and `strands` on AgentCore;
@@ -134,6 +138,13 @@ differences from the untagged code that was on `main` before it.
   module's text.
 - task.toml stays readable when a value holds U+007F, and keys that are not bare TOML keys are
   quoted.
+- The source-text probe fails closed. Before the fix, the local executor given a relative
+  `--scratch` handed the probe a relative path; its git diff failed and it substituted nothing, so
+  a test that greps source text was accepted as a behaviour test. Now the scratch path is
+  absolute, and a probe that cannot list the changed files rejects the draft
+  (`text-probe-failed`).
+- `init` on a local clone whose recipe names no GitHub repository no longer requires a GitHub
+  sign-in, and shows the clone path relative to the current directory.
 - The report no longer lists a reason with a count of 0.
 
 [Unreleased]: https://github.com/didhd/taskmine/compare/v0.1.0...HEAD

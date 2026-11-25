@@ -336,50 +336,84 @@ The smoke run (oracle 1.0, nop 0.0) and the bench ran on 0.27.0.
 oracle run in a new container (`docker run --rm --network none`). The AgentCore executor does the
 same with a new session per run, as the agent user, with an empty allowlist and no credentials.
 
-**V1 is the default; V2 is an option (`--platform V2`), measured slower for this workload.**
+**V1 is the default; V2 is an explicit option (`--platform V2`).** With AgentCore's own guidance
+applied, V2 matched V1 on test time but not on session setup. It was not faster.
 
-V2 restores each session from a snapshot instead of pulling the image. But a restored session
-fetches image blocks the first time it reads them, and a test run here reads thousands of small
-files under `node_modules`.
+Sources:
+- AWS Machine Learning Blog, "Architecture patterns for fast session startup on Amazon Bedrock
+  AgentCore runtime" (2026-11-13),
+  https://aws.amazon.com/blogs/machine-learning/architecture-patterns-for-fast-session-startup-on-amazon-bedrock-agentcore-runtime/
+- Its linked guides:
+  - https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-v2-optimize.html
+  - https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-lifecycle-hooks.html
 
-Measured on 2026-11-24 in `us-east-1`, same images and same tasks.
+Why V2 can be slow here:
+- V2 restores each session from a snapshot instead of pulling the image.
+- Files in the snapshot are fetched block by block the first time a session reads them, "most
+  noticeable in the first sessions after you create or update your agent".
+- A test run here reads thousands of small files under `node_modules`.
 
-Validation of one draft (8 runs):
+What taskmine applies, and what it does not:
 
-| | build + deploy | test command per run | validate wall |
-|---|---|---|---|
-| V1, sequential runs | 189 s | 69-71 s | ~830 s |
-| V1, parallel runs | 190 s | 69-79 s | 501 s |
-| V2 | 496 s | 166-217 s | 1317 s |
-| V2 + warmup hook | 914 s | 125-139 s | 1494 s |
+| guidance | in taskmine |
+|---|---|
+| do the init before the health check passes | yes: PR #120's shim starts the firewall, then answers /ping |
+| a build hook; in the memory call, load what sessions need (a RAM-backed file system is part of the memory snapshot) | `TASKMINE_AC_WARMUP=ram`: `/app` (830 MB for the measured task) copied into a tmpfs bound over `/app`, in 1.3-1.7 s |
+| in the disk call, do once what a session does first | `ram` and `disk` modes: git, node and python, then the harness files for up to 90 s |
+| ship compiled bytecode (`UV_COMPILE_BYTECODE=1`) | no: it only speeds Strands' own imports, not validation |
+| snapshot-safe randomness (no programs holding TLS state at snapshot time) | nothing to do: the proxy only relays bytes, and agents start in the session |
+| pre-warm sessions before a user engages | not applicable: runs are batch jobs |
 
-Bench of 4 agents x 8 tasks (p50 / p90 seconds):
+How the first comparison went wrong. It was not a paired comparison. Reconstructed from the raw
+logs and CloudTrail:
+- **Cold V2 only.** Both V2 validations ran on a runtime created minutes before, so their 8 runs
+  were its first sessions.
+  - V2: 166-217 s per test command.
+  - V2 with the disk-only hook: 125-139 s.
+- **V1 under heavier load, still fast.** V1 ran with 30 to 48 bench trials of other tasks running
+  at the same time, and its first, cold use measured the same as later uses (69-71 s).
+- **The bench comparison did not match either.** V2 ran all 4 agents at once (16 sessions) on
+  fresh runtimes; V1 ran in three smaller batches.
+- **The runtimes were gone.** The low-level `validate` deletes an accepted draft's runtime unless
+  `--keep-images`, so those V2 runtimes no longer existed for a warm re-run. (`verify` keeps them.)
 
-| | session first call | environment setup | agent run | grading | trial |
-|---|---|---|---|---|---|
-| V1 | 1.0 / 1.9 | 3.6 / 4.4 | 132 / 312 | 12 / 23 | 165 / 397 |
-| V2 | 7.8 / 9.0 | 10.8 / 11.4 | 239 / 443 | 18 / 34 | 301 / 593 |
+The paired measurement (2026-11-25, one draft of the dogfood repository, 8 runs per variant):
+- Each variant ran taskmine's real `validate_one`: the same stages, at most 3 runs at once.
+- Both variants ran at the same time, on images that already existed.
+- Round 1 was the RAM-tuned runtime's first sessions; round 2 ran right after.
 
-- Solve counts were the same within noise: 11 of 32 on V1, 12 of 32 on V2.
-- Agent run time also includes model latency. The session, setup and test-command times do not,
-  and V2 was slower on every one of them.
-- Creating a V2 runtime also takes minutes longer, because the snapshot is built at deploy.
+| round | variant | verdict | errors | session setup per run, p50 (max) | test command, p50 (range) | end to end |
+|---|---|---|---|---|---|---|
+| 1 | V1 | accepted, f2p 2 / p2p 6 | 0 | 5.2 s (6.5) | 70.5 s (69.6-71.6) | 307 s |
+| 1 | V2 + ram hook | accepted, f2p 2 / p2p 6 | 0 | 7.9 s (14.2) | 73.2 s (70.4-75.1) | 330 s |
+| 2 | V1 | accepted, f2p 2 / p2p 6 | 0 | 4.8 s (5.5) | 69.6 s (68.5-71.2) | 301 s |
+| 2 | V2 + ram hook | accepted, f2p 2 / p2p 6 | 0 | 7.5 s (13.1) | 73.1 s (70.2-74.0) | 330 s |
 
-**The V2 build hook is opt-in (`TASKMINE_AC_WARMUP=1`).** It follows AgentCore's own guidance for
-agents that read many files.
-- How it works:
-  - The image's command starts a small endpoint on :9090, then PR #120's shim.
-  - AgentCore calls the endpoint twice. On the `disk` call it reads `/app`, the harnesses and the
-    global npm tree for up to 90 seconds.
-  - The image gets its own tag (`w` plus a hash of the hook), so it never shadows a plain V2
-    image.
-- Measured:
-  - It cut the V2 test command from 166-217 s to 125-139 s, still about twice V1.
-  - It made the deploy 724 s.
-  - Reading 1 GB of image files took longer than the 120 s budget, so the hook reads what it can.
-  - A first version checked its deadline only between files, ran one call to 121 s, and failed
-    the runtime's creation. The deadline is now checked between 1 MB reads.
-- V2 runtimes are named `<V1 name>_v2`, so both platforms can serve the same image side by side.
+- Session setup covers the session start, the uploads of tests/ and solution/, and the download of
+  the logs.
+- nop scored 0 and oracle 1 in every round, for both variants.
+- Tuned V2 had no cold penalty: round 1 equalled round 2, because the repository was in memory.
+- It was still about 3 s slower per run to set up, and about 8-10% slower end to end, in both
+  rounds.
+- Deploying it took 677 s against about 8 s for V1. PR #120's deploy creates the runtime and then
+  updates it (to require IMDSv2), and on V2 each step builds a snapshot.
+
+So V1 stays the default for `verify` and `bench`. V2 remains available:
+- `--platform V2` alone;
+- with `TASKMINE_AC_WARMUP=ram`, or `disk` for the read-only hook.
+
+A V2 runtime is named `<V1 name>_v2`, and a hooked image gets its own tag (`w` plus a hash of the
+hook, its mode and the Dockerfile tail). So every variant can serve the same task side by side.
+Re-measure if AgentCore's V2 changes: the paired script's method is above.
+
+**The build hook's details:**
+- It must answer within the shared 120 s.
+- A first version checked its deadline only between files, ran one call to 121 s, and failed the
+  runtime's creation. The deadline is now checked between 1 MB reads.
+- A hook error is reported in the build log and answered with 200: an optimization never fails a
+  runtime.
+- In `ram` mode, git in the disk call exits 128. Root runs it in a repository owned by the agent
+  user (git's ownership check). The git binary is read anyway, which is what the call is for.
 
 **Validation runs at once on AgentCore.** Every validation run is its own microVM, so an
 executor with `parallel_runs` runs the repeat base and gold runs together, and then nop with

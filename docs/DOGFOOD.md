@@ -181,7 +181,13 @@ Notes:
     call with the scoped agent credentials got the same answer.
   - Strands: Harbor ships no default Strands factory.
 
-**V1 against V2** (p50 / p90 seconds; 32 trials each):
+**V1 against V2, unpaired** (p50 / p90 seconds; 32 trials each). This comparison is not paired:
+- V2 ran all 4 agents at once (16 sessions) on runtimes created minutes before, so these were
+  their first, slowest sessions.
+- V1 ran in three smaller batches.
+
+The paired verify measurement in AGENTS.md ("Decisions and why") replaces it for the platform
+decision.
 
 | | session first call | environment setup | agent run | grading | trial |
 |---|---|---|---|---|---|
@@ -191,10 +197,13 @@ Notes:
 **`verify` on AgentCore.**
 - A new draft (`pr8572`) was mined and validated there: accepted with fail-to-pass 2 and
   pass-to-pass 6, the same verdict the Docker host had given.
-- Its 8 runs took 69 to 79 s each on V1, and 166 to 217 s on V2 (125 to 139 s with the build
-  hook).
+- Its 8 runs took 69 to 79 s each on V1.
+- On V2 they took 166 to 217 s, and 125 to 139 s with the disk-only hook. Both were measured on a
+  freshly created runtime (cold).
+- In the later paired measurement, the RAM-tuned V2 ran its tests in 70 to 75 s. It still set up
+  about 3 s slower per run and finished 8-10% later.
 - Running the repeat runs at once took the draft from about 830 s to 501 s.
-- AGENTS.md ("Decisions and why") has the full table and the reasons V1 stays the default.
+- AGENTS.md ("Decisions and why") has the tables and the reasons V1 stays the default.
 
 ## A Python repository
 

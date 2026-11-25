@@ -9,17 +9,14 @@ from yours: every merged pull request that changed code together with its tests 
 kept only when execution proves it. The new tests must fail without the change, pass with it in every
 repeated run, and Harbor's do-nothing agent must score 0 while its oracle scores 1.
 
-https://github.com/user-attachments/assets/237d1e33-05db-476f-84aa-8eb8b06a2e5a
-
-**About the demo.** It is a real terminal session: every command was typed and then run, and every
-line of output is what the command printed. Part 1 ran on a laptop and part 2 on a Docker host.
-- Waits longer than 1.5 s were cut to 1.5 s. For example, `bench` took 10 min 22 s, as its own
-  `[mm:ss]` stamps show.
-- Two whole commands were dropped:
-  - a first `gateway` start whose LiteLLM process had not come up;
-  - a `results` that showed the older run (since fixed, and re-recorded).
-
-To replay the recording in a terminal, run `asciinema play docs/demo.cast`.
+**The demo** ([docs/demo.cast](docs/demo.cast); replay it with `asciinema play docs/demo.cast`).
+- The run: one real terminal session on a laptop with no Docker, from `init` to `results`, with
+  verification and every agent trial on AgentCore Runtime (V1).
+- The repository is synthetic: [demo/make_shop.py](demo/make_shop.py) writes it, so no real code
+  is shown.
+- It was recorded with `demo/record.py --live`: every event carries its wall-clock time, each
+  command appears when it starts, and the recorder waited 1 s between commands. Nothing was
+  shortened, cut or edited, so the recording is as long as the session.
 
 ## Quick start
 
@@ -121,14 +118,16 @@ Limits:
   AgentCore runs that on EC2 instances (a capacity provider in your VPC), which taskmine does not
   set up yet. Use a Docker host instead.
 - `--platform V1` is the default (what PR #120 tested) and caps an image near 2 GB compressed.
-  `--platform V2` allows 10 GB and restores each session from a snapshot. On this workload V2 was
-  slower, because a restored session fetches image blocks on first read and the tests read
-  thousands of small files:
-  - session start p50 7.8 s against 1.0 s;
-  - a validation test run 166-217 s against 69-71 s.
-
-  `TASKMINE_AC_WARMUP=1` adds AgentCore's build hook to pre-read the files (V2 test runs:
-  125-139 s). The numbers are in AGENTS.md ("Decisions and why").
+  `--platform V2` allows 10 GB and restores each session from a snapshot. A restored session
+  fetches image files on first read, and the tests read thousands of small files.
+  - `TASKMINE_AC_WARMUP=ram` applies AgentCore's
+    [V2 guidance](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-v2-optimize.html):
+    a build hook that holds the repository in the memory snapshot.
+  - In a paired measurement (same task, same stages, same time), tuned V2 matched V1's test
+    time: 73 s against 70 s per run. But it took about 3 s longer per run to set up, and 8-10%
+    longer end to end. It also took 677 s to deploy, against 8 s for V1.
+  - So V1 stays the default. The method, the raw conditions and an earlier, unpaired measurement
+    are in AGENTS.md ("Decisions and why").
 - Grading runs in the trial's own session, as on a Docker host. PR #120's staged, sealed grading
   needs a `test.sh --stage` that taskmine's grader does not have yet. Its trials are logged as
   `unsealed` in `agentcore.jsonl`.
