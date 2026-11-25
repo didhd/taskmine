@@ -18,6 +18,7 @@ The template text around them is fixed and the same for every task.
 
 from __future__ import annotations
 
+import html
 import re
 
 from taskmine.contract import Contract
@@ -94,7 +95,8 @@ def render(
     shown = f2p[:MAX_TEST_NAMES]
     for t in shown:
         file, _, name = t.partition("::")
-        parts.append(f"- {name.replace('::', ' > ')} (`{file}`)")
+        # node's JUnit reporter escapes twice (&amp;quot;), so a parsed name can still hold an entity
+        parts.append(f"- {html.unescape(name).replace('::', ' > ')} (`{file}`)")
     if len(f2p) > len(shown):
         parts.append(f"- and {len(f2p) - len(shown)} more in the same files")
     parts.append("")

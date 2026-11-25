@@ -44,6 +44,14 @@ class DemoShop(unittest.TestCase):
             self.assertEqual(verdicts["shop-pr2"]["fail_to_pass"], ["test/tax.test.mjs::rounds each line to the cent before adding"])
             cands = [json.loads(line) for line in (tmp / "out" / "candidates.jsonl").read_text().splitlines()]
             self.assertEqual({c["unit"]: c["refusal"] for c in cands if c["refusal"]}, {"pr3": "no-test-change"})
+            # No GitHub metadata: the title is the pull request's, from the merge commit's body.
+            tm("finalize", *r)
+            ins = (tmp / "out" / "tasks" / "shop-pr1" / "instruction.md").read_text()
+            self.assertTrue(ins.startswith("# Add discount codes (SAVE10, HALF)\n"), ins[:80])
+            self.assertIn('"unknown code: FREE"', ins)  # node's doubly escaped JUnit names, shown as written
+            self.assertNotIn("&quot;", ins)
+            names = ins.split("## Names the tests use that do not exist yet", 1)[1].split("##", 1)[0]
+            self.assertNotIn("`unknown`", names)  # the words of a regular expression literal are not names
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
 
@@ -61,6 +69,19 @@ class DemoShop(unittest.TestCase):
             self.assertNotIn(str(tmp), out)
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
+
+
+class RegexLiterals(unittest.TestCase):
+    def test_a_regular_expression_is_neither_names_nor_text_and_division_stays_code(self):
+        from taskmine import contract
+        code, strings = contract.split_source(
+            "t.test.mjs", "assert.throws(() => f(), /unknown code/);\nconst x = a / b / c;\n"
+                          "s.match(/[a/b]+/g);\nreturn /x/.test(y);\nassert.equal(f('half'), 1);")
+        self.assertNotIn("unknown", code)
+        self.assertIn("a / b / c", code)
+        self.assertNotIn("[a", code)
+        self.assertIn(".test(y)", code)
+        self.assertEqual(strings, [("half", False)])
 
 
 @unittest.skipUnless(shutil.which("node"), "needs node")

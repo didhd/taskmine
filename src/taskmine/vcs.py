@@ -57,6 +57,7 @@ class Commit:
     parents: tuple[str, ...]
     subject: str
     date: str
+    body: str = ""
 
 
 def decode_path(raw: bytes) -> str:
@@ -165,13 +166,13 @@ class Repo:
         )
 
     def merges(self, branch: str, since: str | None) -> list[Commit]:
-        args = ["log", branch, "--merges", "--format=%H%x1f%P%x1f%s%x1f%cI%x1e"]
+        args = ["log", branch, "--merges", "--format=%H%x1f%P%x1f%s%x1f%cI%x1f%b%x1e"]
         if since:
             args.insert(2, f"--since={since}")
         return self._parse_log(self._run(args))
 
     def first_parent_commits(self, branch: str, since: str | None) -> list[Commit]:
-        args = ["log", branch, "--first-parent", "--format=%H%x1f%P%x1f%s%x1f%cI%x1e"]
+        args = ["log", branch, "--first-parent", "--format=%H%x1f%P%x1f%s%x1f%cI%x1f%b%x1e"]
         if since:
             args.insert(2, f"--since={since}")
         return self._parse_log(self._run(args))
@@ -186,6 +187,6 @@ class Repo:
             rec = rec.strip("\n")
             if not rec:
                 continue
-            sha, parents, subject, date = rec.split("\x1f")
-            commits.append(Commit(sha, tuple(parents.split()), subject, date))
+            sha, parents, subject, date, body = rec.split("\x1f", 4)
+            commits.append(Commit(sha, tuple(parents.split()), subject, date, body.strip()))
         return commits

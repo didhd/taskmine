@@ -182,7 +182,7 @@ def finalize(cfg: Config, draft: Path, validation: dict, tasks_root: Path) -> di
     meta = info.get("meta") or {}
     con = contract.Contract(**info["contract"])
     f2p, p2p = validation["fail_to_pass"], validation["pass_to_pass"]
-    title = meta.get("title") or cand.subject
+    title = meta.get("title") or cand.title or cand.subject
 
     gold_patch = (draft / "solution" / "gold.patch").read_bytes()
     code_lines = contract.added_lines(gold_patch, skip_paths=cfg.docs.match)

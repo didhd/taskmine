@@ -56,6 +56,42 @@ class Contract:
         return asdict(self)
 
 
+_REGEX_AFTER = set("(,=:[!&|?{};+-*%<>~^") | {""}
+_REGEX_KEYWORDS = ("return", "typeof", "case", "in", "of", "new", "delete", "void", "throw", "yield", "await")
+
+
+def _regex_may_start(code: list[str]) -> bool:
+    """A `/` starts a regular expression literal where a value is expected, not after a value (division)."""
+    tail = "".join(code[-40:]).rstrip()
+    if not tail or tail[-1] in _REGEX_AFTER:
+        return True
+    word = re.search(r"([A-Za-z_$][\w$]*)$", tail)
+    return bool(word and word.group(1) in _REGEX_KEYWORDS)
+
+
+def _regex_end(text: str, i: int) -> int | None:
+    """The index after a regular expression literal starting at i (its flags included), or None."""
+    j, n, in_class = i + 1, len(text), False
+    while j < n:
+        ch = text[j]
+        if ch == "\n":
+            return None
+        if ch == "\\":
+            j += 2
+            continue
+        if ch == "[":
+            in_class = True
+        elif ch == "]":
+            in_class = False
+        elif ch == "/" and not in_class:
+            j += 1
+            while j < n and text[j].isalpha():
+                j += 1
+            return j
+        j += 1
+    return None
+
+
 def split_source(path: str, text: str) -> tuple[str, list[tuple[str, bool]]]:
     """(code with comments and strings blanked, [(string literal, is_test_title)])."""
     py = path.endswith(".py")
@@ -74,6 +110,14 @@ def split_source(path: str, text: str) -> tuple[str, list[tuple[str, bool]]]:
             j = text.find("*/", i + 2)
             i = n if j < 0 else j + 2
             code.append(" ")
+        elif js and c == "/" and _regex_may_start(code):
+            j = _regex_end(text, i)
+            if j is None:
+                code.append(c)
+                i += 1
+            else:
+                code.append(" ")
+                i = j
         elif c in "'\"`" and not (py and c == "`"):
             q = text[i : i + 3] if py and text[i : i + 3] in ('"""', "'''") else c
             j = i + len(q)

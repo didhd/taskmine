@@ -92,11 +92,11 @@ DISCOUNT = {
         "import { test } from 'node:test';\nimport assert from 'node:assert/strict';\n"
         "import { createCart, addItem, subtotal } from '../lib/cart.mjs';\n"
         "import { applyCode, discount } from '../lib/discount.mjs';\n\n"
-        "test('SAVE10 takes ten percent off', () => {\n  const c = addItem(createCart(), 'pad', 1000);\n"
+        "test('discount(cart, subtotal) after applyCode(cart, \"SAVE10\") is 10% of the subtotal, in cents', () => {\n  const c = addItem(createCart(), 'pad', 1000);\n"
         "  applyCode(c, 'SAVE10');\n  assert.equal(discount(c, subtotal(c)), 100);\n});\n\n"
-        "test('codes ignore case and spaces', () => {\n  const c = addItem(createCart(), 'pad', 1000);\n"
+        "test('applyCode ignores case and surrounding spaces: \"  half \" is HALF, 50% off', () => {\n  const c = addItem(createCart(), 'pad', 1000);\n"
         "  applyCode(c, '  half ');\n  assert.equal(discount(c, subtotal(c)), 500);\n});\n\n"
-        "test('an unknown code is refused', () => {\n"
+        "test('applyCode throws an Error \"unknown code: FREE\" for a code it does not know', () => {\n"
         "  assert.throws(() => applyCode(createCart(), 'FREE'), /unknown code/);\n});\n"),
 }
 
@@ -132,11 +132,11 @@ STOCK = {
     "test/stock.test.mjs": (
         "import { test } from 'node:test';\nimport assert from 'node:assert/strict';\n"
         "import { createStock, reserve, release, available } from '../lib/stock.mjs';\n\n"
-        "test('reserving lowers what is available', () => {\n  const s = createStock({ pen: 5 });\n"
+        "test('reserve(stock, sku, qty) lowers available(stock, sku) by qty; createStock({ pen: 5 }) starts at 5', () => {\n  const s = createStock({ pen: 5 });\n"
         "  reserve(s, 'pen', 3);\n  assert.equal(available(s, 'pen'), 2);\n});\n\n"
-        "test('reserving more than is left is refused', () => {\n  const s = createStock({ pen: 2 });\n"
+        "test('reserve throws an Error \"only 2 pen left\" when qty is more than is available', () => {\n  const s = createStock({ pen: 2 });\n"
         "  assert.throws(() => reserve(s, 'pen', 3), /only 2 pen left/);\n});\n\n"
-        "test('releasing gives units back, never below zero', () => {\n  const s = createStock({ pen: 2 });\n"
+        "test('release(stock, sku, qty) gives held units back and never holds fewer than zero', () => {\n  const s = createStock({ pen: 2 });\n"
         "  reserve(s, 'pen', 2);\n  release(s, 'pen', 5);\n  assert.equal(available(s, 'pen'), 2);\n});\n"),
 }
 
@@ -151,9 +151,9 @@ CSV = {
     "test/csv.test.mjs": (
         "import { test } from 'node:test';\nimport assert from 'node:assert/strict';\n"
         "import { createCart, addItem } from '../lib/cart.mjs';\nimport { toCsv } from '../lib/csv.mjs';\n\n"
-        "test('one row per line under a header', () => {\n  const c = addItem(createCart(), 'pen', 150, 2);\n"
+        "test('toCsv(cart) writes the header sku,qty,price,total and one row per cart line, ending in a newline', () => {\n  const c = addItem(createCart(), 'pen', 150, 2);\n"
         "  assert.equal(toCsv(c), 'sku,qty,price,total\\npen,2,150,300\\n');\n});\n\n"
-        "test('quotes a field with a comma or a quote', () => {\n"
+        "test('toCsv quotes a field that holds a comma, a quote or a newline, and doubles its quotes', () => {\n"
         "  const c = addItem(createCart(), 'pen, \"blue\"', 150);\n"
         "  assert.equal(toCsv(c).split('\\n')[1], '\"pen, \"\"blue\"\"\",1,150,150');\n});\n"),
 }
