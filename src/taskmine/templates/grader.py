@@ -149,8 +149,75 @@ def run_command(spec, app, logs):
     return junit, code, timed_out, round(time.time() - started, 2)
 
 
-def parse_junit(path, app):
+_WORD = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
+def _leaf(name):
+    """The test's own identifier in a runner's name for it: `TestCart/sub` (Go), `tests::adds_lines` (Rust),
+    `Acme.CartTests.AddsLines(x: 1)` (.NET), `addsLines()` (JUnit 5), `test_total[case]` (pytest)."""
+    name = re.split(r"[([]", name, maxsplit=1)[0].strip()
+    if " " in name:  # a display name, not an identifier: searched for as written
+        return None
+    name = name.split("/")[0]
+    for sep in ("::", "."):
+        name = name.split(sep)[-1]
+    return name if _WORD.fullmatch(name or "") else None
+
+
+def file_for(classname, name, run_files, app, cache, suites=()):
+    """The run file a testcase belongs to when the report has no file attribute.
+
+    Maven and Gradle (surefire), gotestsum, cargo-nextest and dotnet name a testcase by class,
+    package or binary only. In order:
+    1. a run file's path given as the class or a suite name (vitest, jest);
+    2. the class as a path (com.acme.CartTest -> com/acme/CartTest.java);
+    3. the last part of the class, binary or package, as the file stem or its directory;
+    4. the run file whose text defines the test's own identifier;
+    5. the only run file.
+    None if still unsure: the testcase then keeps its class as its file.
+    """
+    if not run_files:
+        return None
+    for named in (classname or "", *suites):
+        named = named.strip().removeprefix("./")
+        if named in run_files:
+            return named
+    cls = re.split(r"[$+]", classname or "")[0]
+    if cls:
+        as_path = cls.replace(".", "/").replace("::", "/")
+        hits = [f for f in run_files if os.path.splitext(f)[0].endswith(as_path)]
+        if len(hits) == 1:
+            return hits[0]
+        last = re.split(r"[./:]+", cls)[-1]
+        hits = [f for f in run_files if os.path.splitext(os.path.basename(f))[0] == last]
+        if len(hits) == 1:
+            return hits[0]
+        hits = [f for f in run_files if os.path.basename(os.path.dirname(f)) == last]
+        if len(hits) == 1:
+            return hits[0]
+    leaf = _leaf(name or "")
+    shown = re.split(r"[([]", name or "", maxsplit=1)[0].strip()
+    if leaf or len(shown) > 3:
+        pat = re.compile(r"\b%s\b" % re.escape(leaf)) if leaf else re.compile(re.escape(shown))
+        hits = []
+        for f in run_files:
+            if f not in cache:
+                try:
+                    with open(os.path.join(app, f), encoding="utf-8", errors="replace") as fh:
+                        cache[f] = fh.read()
+                except OSError:
+                    cache[f] = ""
+            if pat.search(cache[f]):
+                hits.append(f)
+        if len(hits) == 1:
+            return hits[0]
+    return run_files[0] if len(run_files) == 1 else None
+
+
+def parse_junit(path, app, run_files=()):
     statuses = {}
+    run_files = list(run_files)
+    texts = {}
     if not os.path.exists(path):
         return statuses
     try:
@@ -169,7 +236,9 @@ def parse_junit(path, app):
             if child.tag == "testsuite":
                 walk(child, suites + [child.get("name", "")], rel(child.get("file")) or file_hint)
             elif child.tag == "testcase":
-                file = rel(child.get("file")) or file_hint or child.get("classname") or "?"
+                file = (rel(child.get("file")) or file_hint
+                        or file_for(child.get("classname"), child.get("name", ""), run_files, app, texts, suites)
+                        or child.get("classname") or "?")
                 ident = "::".join([file] + [s for s in suites if s] + [child.get("name", "")])
                 n, base = 2, ident
                 while ident in statuses:
@@ -209,7 +278,7 @@ def main():
     restore_test_side(a.app, spec.get("test_globs") or [], notes)
     install_hidden_tests(a.tests, a.app, spec.get("deleted") or [])
     junit, code, timed_out, seconds = run_command(spec, a.app, a.logs)
-    statuses = parse_junit(junit, a.app)
+    statuses = parse_junit(junit, a.app, spec["run_files"])
     for f in spec["run_files"]:
         if not any(k.startswith(f + "::") for k in statuses):
             statuses["%s::%s" % (f, NO_TESTS)] = "failed"
