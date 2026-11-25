@@ -100,9 +100,20 @@ class Rewrites(unittest.TestCase):
         for line in DOCKERFILE.splitlines()[2:]:
             self.assertIn(line, out)
         self.assertTrue(out.rstrip().endswith("chmod -R a+rX /opt/uv-python"))
-        self.assertIn("chown -R 2000:2000 /app", out)
         for pin in (ac.CLAUDE_CODE, ac.CODEX, ac.STRANDS):
             self.assertIn(pin, out)
+
+    def test_the_repository_moves_to_work_repo_before_anything_is_written_to_app(self):
+        # PR #120's layer keeps a root-only .git and baseline only for /work/repo, and its staged grader
+        # reads the base commit from /var/lib/task_base_ref.
+        lines = ac.dockerfile(DOCKERFILE).splitlines()
+        link = lines.index("RUN mkdir -p /work/repo && rm -rf /app && ln -s /work/repo /app")
+        self.assertEqual(lines[link + 1], "WORKDIR /app")
+        self.assertLess(link, next(i for i, x in enumerate(lines) if x.startswith("COPY repo.tar.gz")))
+        self.assertIn("rev-parse --verify -q taskmine-base^{commit} > /var/lib/task_base_ref", "\n".join(lines))
+        self.assertNotIn("chown -R 2000:2000 /app", "\n".join(lines))  # PR #120's layer gives the agent /work/repo
+        with self.assertRaises(ac.AgentCoreError):
+            ac.dockerfile("FROM python:3.12\nWORKDIR /src\n")
 
     def test_task_toml_allowlists_bedrock_for_the_agent_and_nothing_for_the_grader(self):
         doc = tomllib.loads(ac.task_toml(TASK_TOML))

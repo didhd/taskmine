@@ -43,11 +43,19 @@ ENV_IMPORT = "taskmine_env:TaskmineAgentCoreEnvironment"
 CLAUDE_CODE = "@anthropic-ai/claude-code@2.1.327"
 CODEX = "@openai/codex@0.162.1"
 STRANDS = "strands-agents==1.54.0"
+# PR #120's staged grader works on /work/repo: its layer gives the agent /work/repo, keeps a root-only
+# copy of its .git, and records the tree as built. /app, where the instruction and the task's
+# commands put the repository, is a root-owned link to it, made before anything is written there.
+STAGED_LAYOUT = """# ===== taskmine: the repository lives at /work/repo for PR #120's staged grader; /app links to it =====
+RUN mkdir -p /work/repo && rm -rf /app && ln -s /work/repo /app
+"""
 VARIANT = f"""
 # ===== taskmine: AgentCore variant (taskmine bench --env agentcore) =====
-# The agent runs as uid 2000 (PR #120's layer below creates that user) and must own the repository.
+# PR #120's layer below makes the agent user (uid 2000) and gives it /work/repo. The staged grader
+# reads the base commit from /var/lib/task_base_ref.
 USER root
-RUN chown -R 2000:2000 /app
+RUN git -C /work/repo rev-parse --verify -q taskmine-base^{{commit}} > /var/lib/task_base_ref \\
+ && chmod 0644 /var/lib/task_base_ref
 # A session's /etc/hosts is empty and read-only, and the agent's namespace has no DNS, so `localhost`
 # would not resolve (vitest, and every test that starts a local server, fail). glibc's myhostname
 # module answers localhost with 127.0.0.1 and ::1 without either.
@@ -231,10 +239,18 @@ def base_image(ref: str) -> str:
 
 
 def dockerfile(text: str) -> str:
-    out = []
+    """The AgentCore copy of a task's Dockerfile: base images from the mirror, the repository at
+    /work/repo behind /app, and the variant (harnesses, localhost, the base ref) at the end."""
+    out, linked = [], False
     for line in text.splitlines():
+        if not linked and re.match(r"^WORKDIR\s+/app/?\s*$", line):
+            out.extend(STAGED_LAYOUT.rstrip("\n").splitlines())
+            linked = True
         m = re.match(r"^(FROM\s+)(\S+)(.*)$", line)
         out.append(m.group(1) + base_image(m.group(2)) + m.group(3) if m else line)
+    if not linked:
+        raise AgentCoreError("this Dockerfile has no `WORKDIR /app`, so its repository cannot be put where PR #120's "
+                             "staged grader looks (/work/repo); taskmine writes that line in every task it makes")
     return "\n".join(out) + "\n" + VARIANT
 
 

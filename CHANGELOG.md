@@ -8,6 +8,35 @@ releases are made.
 
 ## [Unreleased]
 
+### Changed
+
+- **Staged grading on AgentCore** (`bench --env agentcore`), after PR #120's
+  `test.sh --stage untrusted|trusted` contract.
+  - Before, the tasks' `test.sh` had no stages. So PR #120's environment graded every trial
+    "unsealed": in one command, as the agent user, with a reward file the agent's code could
+    write.
+  - Now the tests run as the agent user on a copy of the repository and write only a JUnit report.
+    The environment checks that the repository did not change. A trusted stage, as the grader user
+    after every agent process has ended, then computes the reward from that report and the task's
+    root-owned files only.
+  - The trusted stage runs a root-owned python3 in isolated mode, takes no reward, grade, status or
+    exit code from the untrusted stage, scores 0 for a report with a DTD, and fails a required test
+    that the report holds twice unless both copies passed.
+  - The AgentCore copy of a task puts the repository at `/work/repo`, where PR #120's layer keeps
+    a root-only baseline, behind an `/app` link. It removes group and world write from `PATH`
+    folders, such as the ruby image's `GEM_HOME`, so the agent cannot plant a program there that
+    the trusted stage would run. The image tags change.
+  - A trial that cannot be graded in stages is now an error instead of an unsealed grade. That
+    covers a task made before this change, `--ek staged_grader=false`, and an image without the
+    baseline.
+  - Harbor's own verifier (`bench --env docker`, plain `harbor run`) still runs `test.sh` without
+    `--stage`, in one stage, and `bench` now says so.
+
+### Fixed
+
+- The grader used `str.removeprefix`, which Python 3.7 and 3.8 do not have, in the JUnit file
+  mapping added in 0.1.1. A test now checks the grader for Python 3.7.
+
 ## [0.1.1] - 2026-11-25
 
 ### Added
