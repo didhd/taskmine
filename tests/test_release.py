@@ -70,7 +70,8 @@ class Notes(TempDir):
 
 
 class Dist(TempDir):
-    def make(self, missing: str | None = None, drop_exec: str | None = None, meta_version: str | None = None) -> Path:
+    def make(self, missing: str | None = None, drop_exec: str | None = None, meta_version: str | None = None,
+             extra: str | None = None) -> Path:
         ver = taskmine.__version__
         files = release.tracked_package_files()
         dist = Path(tempfile.mkdtemp(dir=self.tmp))
@@ -81,6 +82,8 @@ class Dist(TempDir):
                 info = zipfile.ZipInfo(path)
                 info.external_attr = (0o755 if executable and path != drop_exec else 0o644) << 16
                 z.writestr(info, b"x")
+            if extra:
+                z.writestr(extra, b"x")
             z.writestr(f"taskmine-{ver}.dist-info/METADATA", f"Name: taskmine\nVersion: {meta_version or ver}\n")
         with tarfile.open(dist / f"taskmine-{ver}.tar.gz", "w:gz") as t:
             for path in files:
@@ -104,6 +107,10 @@ class Dist(TempDir):
         if executables:
             self.assertEqual(release.check_dist(self.make(drop_exec=executables[0])),
                              [f"wheel has {executables[0]} without its executable bit"])
+
+    def test_a_file_git_does_not_track(self):
+        self.assertEqual(release.check_dist(self.make(extra="taskmine/__pycache__/cli.cpython-312.pyc")),
+                         ["wheel has taskmine/__pycache__/cli.cpython-312.pyc, which git does not track (a build leftover?)"])
 
     def test_an_empty_dist_directory(self):
         (self.tmp / "dist").mkdir()

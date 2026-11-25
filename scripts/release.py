@@ -100,6 +100,8 @@ def check_dist(dist: Path, root: Path = ROOT) -> list[str]:
             problems.append(f"wheel is missing {path}")
         elif executable and not (info.external_attr >> 16) & 0o111:
             problems.append(f"wheel has {path} without its executable bit")
+    extra = [n for n in infos if n.startswith("taskmine/") and not n.endswith("/") and n not in want]
+    problems += [f"wheel has {n}, which git does not track (a build leftover?)" for n in sorted(extra)]
     with tarfile.open(sdists[0]) as t:
         prefix = f"taskmine-{ver}/src/"
         names = {m.name[len(prefix):] for m in t.getmembers() if m.name.startswith(prefix)}
