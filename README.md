@@ -209,3 +209,11 @@ PYTHONPATH=src python3 -m unittest discover -s tests   # real git repos and real
 pseudo-terminal. Only waiting is shortened, and output is never edited.
 
 License: MIT-0.
+
+## Contributing and releases
+
+- [CONTRIBUTING.md](CONTRIBUTING.md): setting up, the tests, and what a pull request needs.
+- [AGENTS.md](AGENTS.md): the code layout, conventions and invariants, for coding agents and people.
+- [CHANGELOG.md](CHANGELOG.md): what changed in each version.
+- [RELEASING.md](RELEASING.md): versioning and the release checklist.
+- [SECURITY.md](SECURITY.md): reporting a vulnerability privately.
