@@ -3,6 +3,16 @@
 
 Written for any python3 >= 3.7 the container has; the standard library only.
 
+It runs in one of three stages (test.sh passes `--stage`):
+- all (the default, what Harbor's own verifier runs): steps 1 to 5 below in one process, in the
+  agent's container. The reward is reward.txt.
+- untrusted (PR #120's staged grader, as the agent user): steps 2 to 4 on a copy of the repository,
+  so the repository itself is left exactly as the agent left it. It writes the JUnit report and
+  run.json to --out and no reward: whatever it writes is evidence, never a score.
+- trusted (PR #120's staged grader, as the grader user, after every agent process is gone): step 5
+  only, from the JUnit report in --in and the task's own files in --tests. It reads nothing from
+  the agent's tree, never reads a reward or a status from --in, and writes reward.json to --out.
+
 1. The reward is written as 0 before anything else, so a crash anywhere below fails the task
    instead of leaving a reward an agent could have planted.
 2. The test side is put back. Every test-side path (spec.json `test_globs`) that differs from the
@@ -29,11 +39,15 @@ import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 import xml.etree.ElementTree as ET
 
 BASE_TAG = "taskmine-base"
 NO_TESTS = "(no tests reported)"
+# The trusted stage parses a report that code the agent influenced wrote: a bounded size, and no
+# DTD (no entity expansion).
+MAX_REPORT_BYTES = 20000000
 
 
 def compile_glob(pattern):
@@ -164,7 +178,7 @@ def _leaf(name):
     return name if _WORD.fullmatch(name or "") else None
 
 
-def file_for(classname, name, run_files, app, cache, suites=()):
+def file_for(classname, name, run_files, app, cache, suites=(), texts_dir=None):
     """The run file a testcase belongs to when the report has no file attribute.
 
     Maven and Gradle (surefire), gotestsum, cargo-nextest and dotnet name a testcase by class,
@@ -205,7 +219,7 @@ def file_for(classname, name, run_files, app, cache, suites=()):
         for f in run_files:
             if f not in cache:
                 try:
-                    with open(os.path.join(app, f), encoding="utf-8", errors="replace") as fh:
+                    with open(os.path.join(texts_dir or app, f), encoding="utf-8", errors="replace") as fh:
                         cache[f] = fh.read()
                 except OSError:
                     cache[f] = ""
@@ -216,7 +230,13 @@ def file_for(classname, name, run_files, app, cache, suites=()):
     return run_files[0] if len(run_files) == 1 else None
 
 
-def parse_junit(path, app, run_files=()):
+def parse_junit(path, app, run_files=(), roots=None, texts_dir=None):
+    """{test id: passed|failed|skipped} from a JUnit report.
+
+    In the agent's container (roots None) a file attribute is resolved on disk against app. The
+    trusted stage passes the roots the tests ran under instead, and texts_dir (the task's own copy
+    of the test files), so that it maps the same ids without reading the agent's tree.
+    """
     statuses = {}
     run_files = list(run_files)
     texts = {}
@@ -230,8 +250,16 @@ def parse_junit(path, app, run_files=()):
     def rel(file_attr):
         if not file_attr:
             return None
-        p = file_attr if os.path.isabs(file_attr) else os.path.join(app, file_attr)
-        return os.path.relpath(os.path.realpath(p), os.path.realpath(app))
+        if roots is None:
+            p = file_attr if os.path.isabs(file_attr) else os.path.join(app, file_attr)
+            return os.path.relpath(os.path.realpath(p), os.path.realpath(app))
+        p = os.path.normpath(file_attr)
+        if not os.path.isabs(p):
+            return p
+        for r in roots:
+            if p.startswith(r.rstrip("/") + "/"):
+                return p[len(r.rstrip("/")) + 1:]
+        return os.path.relpath(p, roots[0])
 
     def walk(node, suites, file_hint):
         for child in node:
@@ -239,7 +267,8 @@ def parse_junit(path, app, run_files=()):
                 walk(child, suites + [child.get("name", "")], rel(child.get("file")) or file_hint)
             elif child.tag == "testcase":
                 file = (rel(child.get("file")) or file_hint
-                        or file_for(child.get("classname"), child.get("name", ""), run_files, app, texts, suites)
+                        or file_for(child.get("classname"), child.get("name", ""), run_files, app, texts, suites,
+                                    texts_dir)
                         or child.get("classname") or "?")
                 ident = "::".join([file] + [s for s in suites if s] + [child.get("name", "")])
                 n, base = 2, ident
@@ -258,49 +287,169 @@ def parse_junit(path, app, run_files=()):
     return statuses
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--tests", required=True)
-    ap.add_argument("--app", required=True)
-    ap.add_argument("--logs", required=True)
-    a = ap.parse_args()
-    reward_path = os.path.join(a.logs, "reward.txt")
-    with open(reward_path, "w") as f:
-        f.write("0\n")
-
-    with open(os.path.join(a.tests, "spec.json")) as f:
-        spec = json.load(f)
-    expected = None
-    exp_path = os.path.join(a.tests, "expected.json")
-    if os.path.exists(exp_path):
-        with open(exp_path) as f:
-            expected = json.load(f)
-
-    notes = []
-    restore_test_side(a.app, spec.get("test_globs") or [], notes)
-    install_hidden_tests(a.tests, a.app, spec.get("deleted") or [])
-    junit, code, timed_out, seconds = run_command(spec, a.app, a.logs)
-    statuses = parse_junit(junit, a.app, spec["run_files"])
-    for f in spec["run_files"]:
+def add_missing(statuses, run_files):
+    for f in run_files:
         if not any(k.startswith(f + "::") for k in statuses):
             statuses["%s::%s" % (f, NO_TESTS)] = "failed"
 
-    result = {"exit_code": code, "timed_out": timed_out, "seconds": seconds, "notes": notes, "statuses": statuses}
-    with open(os.path.join(a.logs, "results.json"), "w") as f:
-        json.dump(result, f, indent=1, sort_keys=True)
 
+def worst(statuses, ident):
+    """A test id that the report holds more than once (`id`, `id #2`, ...) passes only if every copy passed."""
+    copies = [v for k, v in statuses.items() if k == ident or (k.startswith(ident + " #") and k[len(ident) + 2:].isdigit())]
+    return "passed" if copies and all(v == "passed" for v in copies) else (copies[0] if copies else None)
+
+
+def grade(statuses, expected):
+    """(reward, required, failing): 1 only if every fail-to-pass and pass-to-pass test passed."""
+    required = list(expected["fail_to_pass"]) + list(expected["pass_to_pass"])
+    failing = [t for t in required if worst(statuses, t) != "passed"]
+    return (1 if required and not failing else 0), required, failing
+
+
+def load(tests):
+    with open(os.path.join(tests, "spec.json")) as f:
+        spec = json.load(f)
+    expected = None
+    exp_path = os.path.join(tests, "expected.json")
+    if os.path.exists(exp_path):
+        with open(exp_path) as f:
+            expected = json.load(f)
+    return spec, expected
+
+
+def write_json(path, data):
+    with open(path, "w") as f:
+        json.dump(data, f, indent=1, sort_keys=True)
+
+
+def stage_all(tests, app, logs):
+    """Harbor's own verifier: everything in the agent's container. reward.txt."""
+    reward_path = os.path.join(logs, "reward.txt")
+    with open(reward_path, "w") as f:
+        f.write("0\n")
+    spec, expected = load(tests)
+    notes = []
+    restore_test_side(app, spec.get("test_globs") or [], notes)
+    install_hidden_tests(tests, app, spec.get("deleted") or [])
+    junit, code, timed_out, seconds = run_command(spec, app, logs)
+    statuses = parse_junit(junit, app, spec["run_files"])
+    add_missing(statuses, spec["run_files"])
+    write_json(os.path.join(logs, "results.json"),
+               {"exit_code": code, "timed_out": timed_out, "seconds": seconds, "notes": notes, "statuses": statuses})
     if expected is None:
         print("taskmine grader: calibration run, %d test statuses recorded" % len(statuses))
         return 0
-    required = list(expected["fail_to_pass"]) + list(expected["pass_to_pass"])
-    failing = [t for t in required if statuses.get(t) != "passed"]
-    reward = 1 if required and not failing else 0
-    with open(os.path.join(a.logs, "grade.json"), "w") as f:
+    reward, required, failing = grade(statuses, expected)
+    with open(os.path.join(logs, "grade.json"), "w") as f:
         json.dump({"reward": reward, "required": len(required), "failing": failing[:100]}, f, indent=1)
     with open(reward_path, "w") as f:
         f.write("%d\n" % reward)
     print("taskmine grader: reward %d (%d of %d required tests passing)" % (reward, len(required) - len(failing), len(required)))
     return 0
+
+
+def copy_tree(src, dest):
+    """A copy of the agent's repository, symlinks kept as symlinks; `cp -a` when there is one (much faster)."""
+    if shutil.which("cp") and subprocess.run(["cp", "-a", os.path.join(src, "."), dest]).returncode == 0:
+        return
+    shutil.rmtree(dest, ignore_errors=True)
+    shutil.copytree(src, dest, symlinks=True)
+
+
+def stage_untrusted(tests, app, out):
+    """Run the tests on a copy of the repository and write the evidence: the JUnit report and run.json.
+
+    PR #120's grader compares the agent's patch before and after this stage, over every file in the
+    repository, and gives no grade if it changed. Running on a copy leaves the repository as the
+    agent left it however much the test run writes (caches, build output, restored test files).
+    """
+    os.makedirs(out, exist_ok=True)
+    spec, _expected = load(tests)
+    scratch = tempfile.mkdtemp(prefix="taskmine-grade-")
+    try:
+        repo = os.path.join(scratch, "repo")
+        os.mkdir(repo)
+        copy_tree(app, repo)
+        notes = ["ran on a copy of the repository at %s" % repo]
+        restore_test_side(repo, spec.get("test_globs") or [], notes)
+        install_hidden_tests(tests, repo, spec.get("deleted") or [])
+        _junit, code, timed_out, seconds = run_command(spec, repo, out)
+        write_json(os.path.join(out, "run.json"), {"exit_code": code, "timed_out": timed_out, "seconds": seconds,
+                                                   "notes": notes, "root": repo})
+        print("taskmine grader: untrusted stage, tests ran (exit %s%s); no reward is written here"
+              % (code, ", timed out" if timed_out else ""))
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+    return 0
+
+
+def report_problem(path):
+    """Why the trusted stage will not parse this report, or None."""
+    if not os.path.isfile(path) or os.path.islink(path):
+        return "no JUnit report from the untrusted stage"
+    if os.path.getsize(path) > MAX_REPORT_BYTES:
+        return "the JUnit report is over %d bytes" % MAX_REPORT_BYTES
+    with open(path, "rb") as f:
+        head = f.read()
+    if b"<!DOCTYPE" in head.upper() or b"<!ENTITY" in head.upper():
+        return "the JUnit report declares a DTD or entities"
+    return None
+
+
+def stage_trusted(tests, inp, out):
+    """The score, from the task's own files and the untrusted stage's JUnit report only.
+
+    Nothing from --in is taken as a result: not reward*, grade.json or results.json, which the
+    staged grader does not even copy, and not run.json's exit code. run.json gives only the folder
+    the tests ran in, to map file paths in the report to test ids, as stage_all does on disk.
+    reward.json is written last; if this stage fails before it, there is no reward and the trial
+    is reported as an error, not as a score.
+    """
+    os.makedirs(out, exist_ok=True)
+    for name in ("reward.json", "reward.txt"):
+        if os.path.lexists(os.path.join(out, name)):
+            os.remove(os.path.join(out, name))
+    spec, expected = load(tests)
+    if expected is None:
+        print("taskmine grader: no expected.json, so there is nothing to grade against")
+        return 3
+    roots = ["/app", "/work/repo"]
+    try:
+        with open(os.path.join(inp, "run.json")) as f:
+            ran_in = json.load(f).get("root")
+        if isinstance(ran_in, str) and os.path.isabs(ran_in):
+            roots.insert(0, os.path.normpath(ran_in))
+    except (OSError, ValueError, AttributeError):
+        pass
+    junit = os.path.join(inp, "junit.xml")
+    problem = report_problem(junit)
+    statuses = {} if problem else parse_junit(junit, "/", spec["run_files"], roots=roots,
+                                              texts_dir=os.path.join(tests, "files"))
+    add_missing(statuses, spec["run_files"])
+    reward, required, failing = grade(statuses, expected)
+    write_json(os.path.join(out, "results.json"), {"statuses": statuses, "notes": [problem] if problem else []})
+    write_json(os.path.join(out, "grade.json"), {"reward": reward, "required": len(required), "failing": failing[:100],
+                                                 "stage": "trusted", "report": problem or "parsed"})
+    write_json(os.path.join(out, "reward.json"), {"reward": float(reward)})
+    print("taskmine grader: trusted stage, reward %d (%d of %d required tests passing)%s"
+          % (reward, len(required) - len(failing), len(required), "; " + problem if problem else ""))
+    return 0
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--stage", choices=("all", "untrusted", "trusted"), default="all")
+    ap.add_argument("--tests", required=True)
+    ap.add_argument("--app")
+    ap.add_argument("--logs")
+    ap.add_argument("--in", dest="inp")
+    ap.add_argument("--out")
+    a = ap.parse_args()
+    if a.stage == "all":
+        return stage_all(a.tests, a.app, a.logs)
+    if a.stage == "untrusted":
+        return stage_untrusted(a.tests, a.app, a.out)
+    return stage_trusted(a.tests, a.inp, a.out)
 
 
 if __name__ == "__main__":
