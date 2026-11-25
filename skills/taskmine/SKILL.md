@@ -32,9 +32,15 @@ its reason.
 
 ## Before you start
 
-- `taskmine --version`. If it is missing: `uv tool install git+https://github.com/didhd/taskmine`.
-- Python 3.11+, git and uv. `gh auth status` must be signed in, unless the user points at a local
-  clone.
+- taskmine does not need to be installed. Run `taskmine --version`. If that fails, run every
+  `taskmine ...` command below as
+  `uvx --from git+https://github.com/didhd/taskmine@v0.1.1 taskmine ...` instead.
+  - That needs only uv (https://docs.astral.sh/uv/) and git. Ask the user before installing uv.
+  - To keep taskmine installed:
+    `uv tool install git+https://github.com/didhd/taskmine@v0.1.1`.
+- `gh auth status` must show the user signed in to GitHub, unless they point at a local clone.
+  If it doesn't, `taskmine login` starts the GitHub CLI's browser sign-in. The user completes that
+  step themselves.
 - `verify` and `bench` run on Amazon Bedrock AgentCore Runtime (`us-east-1`) by default. They need:
   - AWS credentials that may create IAM roles, ECR, S3, CodeBuild and AgentCore runtimes;
   - Bedrock access to the agent models.
