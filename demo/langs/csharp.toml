@@ -1,0 +1,25 @@
+# Recipe for demo/langs/make_repo.py csharp: a synthetic repository, so no GitHub key.
+# Dependencies are installed when the image is built; validation and grading run with no network.
+
+[repo]
+name = "acme/shop-csharp"
+
+[units]
+kind = "merges"
+branch = "main"
+
+[tests]
+paths = ["Shop.Tests/**"]
+
+[[profiles]]
+name = "dotnet-xunit"
+run = ["Shop.Tests/*Tests.cs"]
+image = "mcr.microsoft.com/dotnet/sdk:8.0"
+deps = ["Shop/Shop.csproj", "Shop.Tests/Shop.Tests.csproj"]
+env = { NUGET_PACKAGES = "/opt/nuget", DOTNET_CLI_TELEMETRY_OPTOUT = "1", DOTNET_NOLOGO = "1", DOTNET_SKIP_FIRST_TIME_EXPERIENCE = "1" }
+install = "cd /app && dotnet restore Shop.Tests/Shop.Tests.csproj && chmod -R a+rwX /opt/nuget"
+# Only the run files' classes; JunitXml.TestLogger writes the report.
+command = 'dotnet test Shop.Tests --no-restore --logger "junit;LogFilePath={junit}" --filter "$(for f in {files}; do printf "FullyQualifiedName~%s|" "$(basename "$f" .cs)"; done | sed "s/|$//")"'
+display_command = "dotnet test Shop.Tests --filter <class>"
+timeout_sec = 600
+text_probe = "static"

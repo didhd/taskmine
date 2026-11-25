@@ -50,7 +50,20 @@ The gateway keeps AWS credentials on the host. It signs Claude Code's Bedrock ca
 
 ## Add a test profile
 
-Taskmine reads JUnit XML. TypeScript with `node:test` or `tsx --test` and Python with pytest have run end to end. Jest, Vitest and Go can emit compatible XML but haven't been verified here. The per-test source text probe is for Node; other runners fall back to a coarser static check.
+Taskmine reads JUnit XML, so any test runner that writes it works. These have run end to end on AgentCore: `mine`, `verify` (nop 0, oracle 1), then `bench` with Claude Code (Sonnet 5.5) and Codex (GPT-6.1 Terra).
+
+| language | runner | recipe | verified | Claude Code | Codex |
+|---|---|---|---|---|---|
+| Python | pytest | [python.toml](../demo/langs/python.toml) | 2 of 2 | 2/2 | 2/2 |
+| TypeScript | Vitest | [typescript.toml](../demo/langs/typescript.toml) | 2 of 2 | 2/2 | 2/2 |
+| Go | `go test` through gotestsum | [go.toml](../demo/langs/go.toml) | 2 of 2 | 2/2 | 2/2 |
+| Java | Maven, JUnit 5 | [java.toml](../demo/langs/java.toml) | 2 of 2 | 2/2 | 2/2 |
+| Rust | cargo-nextest | [rust.toml](../demo/langs/rust.toml) | 2 of 2 | 2/2 | 2/2 |
+| C# | `dotnet test`, xUnit | [csharp.toml](../demo/langs/csharp.toml) | 2 of 2 | 2/2 | 2/2 |
+| Ruby | RSpec | [ruby.toml](../demo/langs/ruby.toml) | 2 of 2 | 2/2 | 2/2 |
+| PHP | PHPUnit | [php.toml](../demo/langs/php.toml) | 2 of 2 | 2/2 | 2/2 |
+
+Each runs on a synthetic repository that [make_repo.py](../demo/langs/make_repo.py) writes in that language: the same three pull requests (a new module with new tests, a change to existing code that keeps an old test passing, and a README edit, which `mine` leaves out as `no-test-change`). JavaScript with `node:test` and Python with pytest have also run on real repositories. The per-test source text probe is for Node; other runners fall back to a coarser static check.
 
 `taskmine init` supplies starter profiles for Node and pytest repos. Give each runner its own profile in a monorepo; see the [TypeScript example](../examples/acme-web/taskmine.toml). A minimal pytest profile looks like this:
 
@@ -74,7 +87,7 @@ command = "python -m pytest -p no:cacheprovider -o junit_family=xunit1 --junitxm
 display_command = "python -m pytest {files}"
 ```
 
-Update `deps` and `install` for your project. Dependencies must be installed in the image before tests run offline. Keep `{files}` and `{junit}` in the command. For Node, use the `junit` test reporter; for Jest and Vitest, configure their JUnit output. For Go, `gotestsum --junitfile` is one option.
+Update `deps` and `install` for your project. Dependencies must be installed in the image before tests run offline. Keep `{files}` and `{junit}` in the command. For Node, use the `junit` test reporter; for other runners, start from the recipe for your language in the table above.
 
 ## What goes into a task
 

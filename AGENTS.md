@@ -19,7 +19,7 @@ standard library; Docker, Harbor and the cloud are only needed to verify tasks a
 | `src/taskmine/forge.py` | pull request titles and closing issues, through `gh api graphql` |
 | `src/taskmine/snapshot.py` | the sealed, reproducible `repo.tar.gz` of the base commit, and the seal check |
 | `src/taskmine/deps.py` | dependency manifests copied before the snapshot, so Docker shares the install layer |
-| `src/taskmine/contract.py` | the interface contract (new names, modules, exact text) and the static source-text check |
+| `src/taskmine/contract.py` | the interface contract (new names, modules, exact text, calls) and the static source-text check |
 | `src/taskmine/instruction.py` | `instruction.md`, from named sources only |
 | `src/taskmine/leak.py` | the answer-absence check on an instruction |
 | `src/taskmine/emit.py` | drafts, the draft digest, and finished tasks (`task.toml`, `expected.json`) |
@@ -167,9 +167,16 @@ leaks the solution.
 
 **The interface contract.**
 - What it is: the names, modules and exact strings that the hidden tests use and that the change
-  adds.
+  adds, and the first call of each new name in the tests, as written.
 - Why: without it, a correct fix under a different function name fails every test, and the task
   measures guessing.
+- Measured on the eight synthetic language repositories (`demo/langs`): before modules, short
+  names, calls and formatted text were covered for languages other than JavaScript, Claude Code and
+  Codex failed the same task in Python, Rust, C#, Ruby and PHP. Each time the cause was something
+  the instruction did not say: the module the tests import, a 2-letter method name, the argument
+  order, or a message the change formats with `{code.strip()}`.
+- Calls show the test's arguments, never its expected result. Tests are hidden for their
+  assertions, not for the shape of the interface they use.
 - Bounded at 150 checks (`contract.MAX_CHECKS`). Without the bound, a large test fixture stalled a
   build.
 - Contract strings that are lines of the gold patch's code are dropped. Quoting them would hand the

@@ -1,0 +1,21 @@
+# Recipe for demo/langs/make_repo.py rust: a synthetic repository, so no GitHub key.
+# Dependencies are installed when the image is built; validation and grading run with no network.
+
+[repo]
+name = "acme/shop-rust"
+
+[units]
+kind = "merges"
+branch = "main"
+
+[[profiles]]
+name = "cargo-nextest"
+run = ["tests/*.rs"]
+image = "rust:1.83-bookworm"
+deps = ["Cargo.toml"]
+env = { CARGO_HOME = "/usr/local/cargo", RUSTUP_HOME = "/usr/local/rustup" }
+# cargo-nextest writes JUnit; the repository's .config/nextest.toml names the file.
+install = 'case "$(uname -m)" in aarch64) A=linux-arm;; *) A=linux;; esac && curl -LsSf "https://get.nexte.st/latest/$A" | tar zxf - -C /usr/local/cargo/bin && cargo nextest --version'
+command = 'cargo nextest run --profile ci --offline --no-fail-fast $(for f in {files}; do printf -- "--test %s " "$(basename "$f" .rs)"; done); cp target/nextest/ci/junit.xml {junit}'
+display_command = "cargo test --test <name>"
+text_probe = "static"

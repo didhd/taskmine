@@ -1,0 +1,20 @@
+# Recipe for demo/langs/make_repo.py php: a synthetic repository, so no GitHub key.
+# Dependencies are installed when the image is built; validation and grading run with no network.
+
+[repo]
+name = "acme/shop-php"
+
+[units]
+kind = "merges"
+branch = "main"
+
+[[profiles]]
+name = "phpunit"
+run = ["tests/*Test.php"]
+image = "php:8.3-cli-bookworm"
+setup = "apt-get update && apt-get install -y --no-install-recommends unzip git && rm -rf /var/lib/apt/lists/* && curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer"
+deps = ["composer.json"]
+install = "cd /app && composer install --no-interaction --no-progress"
+command = "vendor/bin/phpunit --bootstrap vendor/autoload.php --log-junit {junit} {files}"
+display_command = "vendor/bin/phpunit {files}"
+text_probe = "static"

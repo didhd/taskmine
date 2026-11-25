@@ -10,7 +10,7 @@ https://github.com/user-attachments/assets/ee577b45-6332-4d3c-a2bf-7e55314ccbfc
 
 ## Try it
 
-Install it with `uv tool install git+https://github.com/didhd/taskmine`. Then start in an empty directory with GitHub CLI and AWS access configured. Replace `your-org/your-repo` with your repo.
+Install it with `uv tool install git+https://github.com/didhd/taskmine`, or run it without installing: `uvx --from git+https://github.com/didhd/taskmine taskmine`. Then start in an empty directory with GitHub CLI and AWS access configured. Replace `your-org/your-repo` with your repo.
 
 ```sh
 # Sign in, clone your repo, and create taskmine.toml.
@@ -48,12 +48,15 @@ AgentCore V1 is the default, so you don't need local Docker. The [usage guide](d
 The CLI is deterministic: the same commits and recipe always give the same tasks and verdicts. The taskmine skill lets Claude Code, Codex, Cursor or Kiro drive it for you. When a step fails, the agent reads the reason, fixes your recipe or environment, and reruns just that step. It never edits tests or verdicts.
 
 ```sh
+# Any agent that reads Agent Skills (Claude Code, Codex, Cursor, Kiro and more)
+npx skills add didhd/taskmine
+
 # Claude Code, as a plugin
 /plugin install taskmine --marketplace didhd/taskmine
-
-# Codex, Cursor, Kiro (or Claude Code without the plugin); add --project for this repo only
-taskmine skill install
 ```
+
+You don't install taskmine first: the skill runs it with `uvx` when it isn't there. If you have the
+CLI, `taskmine skill install` does the same as `npx skills add`.
 
 Then ask: *"Use taskmine to benchmark Claude Code and Codex on this repo."*
 
@@ -62,5 +65,7 @@ Then ask: *"Use taskmine to benchmark Claude Code and Codex on this repo."*
 Taskmine starts at the commit before the fix. It only keeps tasks where the tests fail without the fix and pass with it. Harbor's `nop` must score 0 and `oracle` must score 1.
 
 On a TypeScript monorepo, **552 candidate PRs yielded 173 verified tasks**. All 173 passed both Harbor checks. [See the run and what we learned](docs/DOGFOOD.md).
+
+Any test runner that writes JUnit XML works. Python, TypeScript, Go, Java, Rust, C#, Ruby and PHP have each run end to end, with a [recipe for each](docs/guide.md#add-a-test-profile).
 
 [Contributing](CONTRIBUTING.md) · [Changelog](CHANGELOG.md) · [MIT-0](LICENSE)

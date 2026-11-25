@@ -1,0 +1,18 @@
+# Recipe for demo/langs/make_repo.py python: a synthetic repository, so no GitHub key.
+# Dependencies are installed when the image is built; validation and grading run with no network.
+
+[repo]
+name = "acme/shop-python"
+
+[units]
+kind = "merges"
+branch = "main"
+
+[[profiles]]
+name = "pytest"
+run = ["tests/test_*.py"]
+image = "python:3.12-bookworm"
+install = "pip install --no-cache-dir pytest==8.3.4"
+command = "python -m pytest -p no:cacheprovider -o junit_family=xunit1 --junitxml={junit} {files}"
+display_command = "python -m pytest {files}"
+text_probe = "static"

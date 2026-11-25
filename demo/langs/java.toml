@@ -1,0 +1,23 @@
+# Recipe for demo/langs/make_repo.py java: a synthetic repository, so no GitHub key.
+# Dependencies are installed when the image is built; validation and grading run with no network.
+
+[repo]
+name = "acme/shop-java"
+
+[units]
+kind = "merges"
+branch = "main"
+
+[[profiles]]
+name = "maven-junit"
+run = ["src/test/java/**/*Test.java"]
+image = "maven:3.9-eclipse-temurin-21"
+deps = ["pom.xml"]
+env = { MAVEN_OPTS = "-Dmaven.repo.local=/opt/m2" }
+# Validation runs offline (-o), so the image must hold every artifact surefire loads at run time: run
+# one throwaway test now, then remove it before the repository is unpacked.
+install = 'cd /app && mkdir -p src/test/java/tm && printf "package tm; class WarmTest { @org.junit.jupiter.api.Test void warm() {} }\n" > src/test/java/tm/WarmTest.java && mvn -B -q test && rm -rf src target && chmod -R a+rwX /opt/m2'
+# Only the run files' classes; surefire writes one report per class, merged into one file.
+command = 'mvn -o -B -q test -Dtest="$(for f in {files}; do basename "$f" .java; done | paste -sd, -)" -Dsurefire.failIfNoSpecifiedTests=false; { echo "<testsuites>"; for x in target/surefire-reports/TEST-*.xml; do sed "1{/^<?xml/d}" "$x"; done; echo "</testsuites>"; } > {junit}'
+display_command = "mvn test -Dtest=<class>"
+text_probe = "static"
