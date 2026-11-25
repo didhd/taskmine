@@ -16,6 +16,11 @@ TASKMINE_AC_WARMUP (V2 only) adds a build hook (taskmine_warmup.py):
 - `disk` (or `1`) reads the files sessions will need while the snapshot is built;
 - `ram` also copies the repository into a tmpfs, which is part of the memory snapshot.
 Those images get their own tag: `w`, then a short hash of the hook, its mode and the Dockerfile tail.
+
+Grading is always staged (PR #120's `test.sh --stage untrusted|trusted`). Where PR #120 would grade
+a trial unsealed instead (staged_grader=false, a test.sh without --stage, an image without the
+grader user or the root-only baseline), this environment refuses to grade it: the trial ends in an
+error, never in a reward that the agent's code could have written.
 """
 
 from __future__ import annotations
@@ -43,8 +48,24 @@ TOOLCHAIN_VARS = ("CARGO_HOME|RUSTUP_HOME|RUST_VERSION|GOPATH|GOROOT|GOTOOLCHAIN
                   "MAVEN_CONFIG|MAVEN_OPTS|GRADLE_HOME|GRADLE_USER_HOME|NUGET_PACKAGES|DOTNET_[A-Z_]+|ASPNETCORE_[A-Z_]+|"
                   "GEM_HOME|GEM_PATH|BUNDLE_[A-Z_]+|RUBY_[A-Z_]+|PHP_[A-Z_]+|PHPIZE_DEPS|COMPOSER_[A-Z_]+|NODE_[A-Z_]+|"
                   "NPM_CONFIG_[A-Z_]+|YARN_[A-Z_]+|PYTHONPATH|PYTHONUNBUFFERED|PIP_[A-Z_]+|CI")
+# The trusted grading stage starts from as-grader, which finds bash through the PATH in task.env. A
+# folder on that PATH that the agent can write (the ruby image's GEM_HOME is mode 1777) would let it
+# plant the program the trusted stage runs. Such a folder outside the agent's own trees loses its
+# group and world write bit; one inside them (/app, /work, /home, /tmp, /logs) fails the build.
+PATH_GUARD = ("RUN P=$(sed -n 's/^PATH=//p' /opt/firewall/task.env | tail -1); IFS=:; for d in $P; do "
+              "case \"$d\" in /*) ;; *) echo \"taskmine: PATH entry '$d' is not absolute\" >&2; exit 1 ;; esac; "
+              "e=$d; while [ ! -e \"$e\" ]; do e=$(dirname \"$e\"); done; "
+              "if setpriv --reuid=2000 --regid=2000 --clear-groups test -w \"$e\" "
+              "|| setpriv --reuid=2001 --regid=2001 --clear-groups test -w \"$e\"; then "
+              "case \"$e\" in /app|/app/*|/work|/work/*|/home|/home/*|/tmp|/tmp/*|/var/tmp|/var/tmp/*|/logs|/logs/*) "
+              "echo \"taskmine: PATH entry $d is in $e, which the agent can write, so the trusted grading stage could run "
+              "its programs\" >&2; exit 1 ;; esac; "
+              "chown root:root \"$e\" && chmod go-w \"$e\" && echo \"taskmine: $e (on PATH) is no longer writable by the agent\"; fi; "
+              "[ -d \"$e\" ] && find \"$e\" -maxdepth 1 ! -type l \\( -perm -0002 -o -perm -0020 \\) -exec chmod go-w {} +; "
+              "done; true\n")
 ENV_TAIL = ("\n# ===== taskmine: the image's toolchain variables for the agent and the grader =====\n"
-            f"RUN printenv | grep -E '^({TOOLCHAIN_VARS})=' >> /opt/firewall/task.env; true\n")
+            f"RUN printenv | grep -E '^({TOOLCHAIN_VARS})=' >> /opt/firewall/task.env; true\n"
+            "# ===== taskmine: no folder on PATH that the agent can write =====\n" + PATH_GUARD)
 WARMUP_FILE = Path(__file__).resolve().parent / "taskmine_warmup.py"
 WARMUP_TAIL = ('\n# ===== taskmine: V2 build hook (taskmine_warmup.py), then PR #120\'s shim =====\n'
                f'ENV TASKMINE_WARMUP_MODE={WARMUP or "disk"}\n'
@@ -102,7 +123,17 @@ if not getattr(p2, "_taskmine_patched", False):  # once per process, even if thi
 
 
 class TaskmineAgentCoreEnvironment(AgentCoreEnvironment):
-    """AgentCoreEnvironment with the platform version taken from TASKMINE_AC_PLATFORM."""
+    """AgentCoreEnvironment with the platform version taken from TASKMINE_AC_PLATFORM, which grades in stages or not at all."""
 
     def __init__(self, *args, platform: str | None = None, **kwargs):
         super().__init__(*args, platform=platform or PLATFORM, **kwargs)
+
+    async def _grade_shared(self, command, cwd, env):
+        """PR #120's staged grade. Where PR #120 would return None (grade unsealed, as uid agent), refuse."""
+        reason = "staged_grader=false" if not self._staged_grader else await self._unstaged_reason()
+        if reason is not None:
+            why = f"staged grading is not possible here ({reason}), and taskmine does not grade unsealed on AgentCore"
+            self._event(event="grader_mode", mode="refused", reason=why, command=command[:300])
+            self._event(event="grader_refused", reason=why, command=command[:300])
+            raise RuntimeError(f"not grading: {why}")
+        return await super()._grade_shared(command, cwd, env)
