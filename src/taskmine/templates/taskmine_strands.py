@@ -25,8 +25,13 @@ SYSTEM_PROMPT = (
 )
 
 
+# Output tokens per model call. Strands' Bedrock default stopped 4 of 8 trials with
+# MaxTokensReachedException while the agent wrote a file; 32,000 is Claude Code's default.
+MAX_TOKENS = int(os.environ.get("TASKMINE_STRANDS_MAX_TOKENS", "32000"))
+
+
 def create_agent(sandbox, model=None, **kwargs):
     if isinstance(model, str):
         from strands.models.bedrock import BedrockModel
-        model = BedrockModel(model_id=model, region_name=os.environ.get("AWS_REGION") or None)
+        model = BedrockModel(model_id=model, region_name=os.environ.get("AWS_REGION") or None, max_tokens=MAX_TOKENS)
     return Agent(model=model, tools=sandbox.get_tools(), system_prompt=SYSTEM_PROMPT, callback_handler=None, **kwargs)
