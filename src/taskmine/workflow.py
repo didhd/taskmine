@@ -351,8 +351,10 @@ def register(sub) -> None:
 
     p = sub.add_parser("verify", help="run every draft (AgentCore or Docker) and keep what execution proves")
     p.add_argument("--jobs", type=int, default=8)
-    p.add_argument("--env", choices=["agentcore", "docker"], default="agentcore")
-    p.add_argument("--platform", choices=["V1", "V2"], default="V1")
+    p.add_argument("--env", choices=["agentcore", "docker"], default="agentcore",
+                   help="where validation runs: AgentCore Runtime sessions (default) or this Docker host")
+    p.add_argument("--platform", choices=["V1", "V2"], default="V1",
+                   help="AgentCore platform version (default: V1; V2 was measured slower here, see AGENTS.md)")
     p.set_defaults(fn=cmd_verify)
 
     p = sub.add_parser("bench", help="run every agent over the tasks with Harbor")
@@ -364,7 +366,7 @@ def register(sub) -> None:
     p.add_argument("--env", choices=["agentcore", "docker"], default="agentcore",
                    help="where trials run: AgentCore Runtime sessions (default) or this Docker host")
     p.add_argument("--platform", choices=["V1", "V2"], default="V1",
-                   help="AgentCore platform version for new runtimes (V1: images up to ~2 GB compressed; V2: 10 GB)")
+                   help="AgentCore platform version for new runtimes (default: V1, images up to ~2 GB compressed; V2: 10 GB, measured slower here)")
     p.add_argument("--build-jobs", type=int, default=6, help="AgentCore: image builds at a time")
     p.add_argument("--region", default=os.environ.get("AWS_REGION", "us-west-2"), help="Docker: the gateway's region")
     p.set_defaults(fn=cmd_bench)

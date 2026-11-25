@@ -62,6 +62,17 @@ class Agents(unittest.TestCase):
         self.assertIn("factory=taskmine_strands:create_agent", args)
 
 
+class Defaults(unittest.TestCase):
+    def test_verify_and_bench_default_to_agentcore_v1(self):
+        import argparse
+        from taskmine import workflow
+        ap = argparse.ArgumentParser()
+        workflow.register(ap.add_subparsers(dest="cmd"))
+        for cmd in ("verify", "bench"):
+            a = ap.parse_args([cmd])
+            self.assertEqual((a.env, a.platform), ("agentcore", "V1"), cmd)
+
+
 class StarterRecipe(unittest.TestCase):
     def test_root_level_tests_and_paths_with_spaces(self):
         import tomllib
